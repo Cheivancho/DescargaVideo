@@ -31,8 +31,30 @@ _RES_DIR = getattr(sys, "_MEIPASS", _APP_DIR)
 
 OUT_FORMATS = {
     "H.264 + AAC (MP4, ligero y compatible)": "h264",
-    "ProRes 422 HQ (MOV, para Media Encoder / edición)": "prores",
-    "HAP (MOV, para Resolume)": "hap",
+    "H.265 / HEVC + AAC (MP4, más pequeño)": "h265",
+    "ProRes 422 HQ (MOV, Media Encoder / edición)": "prores",
+    "ProRes 422 (MOV, más liviano)": "prores_std",
+    "DNxHR HQ (MOV, Premiere / Avid / DaVinci)": "dnxhr",
+    "HAP (MOV, Resolume)": "hap",
+    "HAP Q (MOV, Resolume, más calidad)": "hapq",
+    "Motion JPEG (MOV, intra-frame ligero)": "mjpeg",
+    "Original de YouTube (sin convertir)": "original",
+}
+
+# kind -> (nombre, extensión, args de video, args de audio, args extra)
+_AAC = ["-c:a", "aac", "-b:a", "320k"]
+_PCM = ["-c:a", "pcm_s16le"]
+RECODE_SPECS = {
+    "h265": ("H.265 + AAC", ".mp4", ["-c:v", "libx265", "-crf", "20", "-preset", "medium",
+                                      "-pix_fmt", "yuv420p", "-tag:v", "hvc1"], _AAC, ["-movflags", "+faststart"]),
+    "prores": ("ProRes 422 HQ", ".mov", ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0",
+                                          "-pix_fmt", "yuv422p10le"], _PCM, []),
+    "prores_std": ("ProRes 422", ".mov", ["-c:v", "prores_ks", "-profile:v", "2", "-vendor", "apl0",
+                                           "-pix_fmt", "yuv422p10le"], _PCM, []),
+    "dnxhr": ("DNxHR HQ", ".mov", ["-c:v", "dnxhd", "-profile:v", "dnxhr_hq", "-pix_fmt", "yuv422p"], _PCM, []),
+    "hap": ("HAP", ".mov", ["-c:v", "hap", "-format", "hap"], _PCM, []),
+    "hapq": ("HAP Q", ".mov", ["-c:v", "hap", "-format", "hap_q"], _PCM, []),
+    "mjpeg": ("Motion JPEG", ".mov", ["-c:v", "mjpeg", "-q:v", "2", "-pix_fmt", "yuvj422p"], _PCM, []),
 }
 
 PLAYLIST_HEIGHTS = [2160, 1440, 1080, 720, 480, 360, 240, 144]
@@ -401,12 +423,12 @@ class App(tk.Tk):
         """Convierte el video descargado al formato de salida elegido.
 
         H.264: solo recodifica lo necesario (video VP9/AV1 y/o audio Opus).
-        ProRes / HAP: recodifica siempre, genera un .mov y borra el .mp4 intermedio.
+        Resto de formatos: recodifica siempre y borra el MP4 intermedio.
         """
-        if not path or not path.lower().endswith(".mp4") or not os.path.isfile(path):
+        kind = self._out_fmt
+        if kind == "original" or not path or not path.lower().endswith(".mp4") or not os.path.isfile(path):
             return
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        kind = self._out_fmt
         if kind == "h264":
             try:
                 info = subprocess.run(["ffmpeg", "-hide_banner", "-i", path], capture_output=True,
@@ -420,23 +442,14 @@ class App(tk.Tk):
             a_ok = (not aud) or aud.group(1) == "aac"
             if v_ok and a_ok:
                 return
-            dest = path[:-4] + ".compat.mp4"
+            label, ext = "H.264 + AAC", ".mp4"
             vcodec = ["-c:v", "copy"] if v_ok else ["-c:v", "libx264", "-crf", "17", "-preset", "medium",
                                                      "-pix_fmt", "yuv420p"]
-            acodec = ["-c:a", "copy"] if a_ok else ["-c:a", "aac", "-b:a", "320k"]
+            acodec = ["-c:a", "copy"] if a_ok else _AAC
             extra = ["-movflags", "+faststart"]
-            label = "H.264 + AAC"
         else:
-            dest = path[:-4] + ".mov"
-            if kind == "prores":
-                vcodec = ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0",
-                          "-pix_fmt", "yuv422p10le"]
-                label = "ProRes 422 HQ"
-            else:
-                vcodec = ["-c:v", "hap", "-format", "hap"]
-                label = "HAP"
-            acodec = ["-c:a", "pcm_s16le"]
-            extra = []
+            label, ext, vcodec, acodec, extra = RECODE_SPECS[kind]
+        dest = path[:-4] + (".compat.mp4" if ext == ".mp4" else ext)
         self.q.put(("status", f"Convirtiendo a {label} (puede tardar)…"))
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:v:0", "-map", "0:a?"]
         cmd += vcodec + acodec + extra + [dest]
@@ -445,8 +458,8 @@ class App(tk.Tk):
                 os.remove(dest)
             self.q.put(("status", f"No se pudo convertir a {label}; se conserva el MP4 original."))
             return
-        if kind == "h264":
-            os.replace(dest, path)
+        if ext == ".mp4":
+            os.replace(dest, path)  # sustituye al MP4 intermedio
         else:
             os.remove(path)
 
