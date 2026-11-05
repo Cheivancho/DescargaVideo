@@ -1,0 +1,45 @@
+﻿DESCARGADOR DE YOUTUBE
+======================
+
+Programa para Windows que descarga videos de YouTube en todas las
+resoluciones disponibles (desde 144p hasta 4K u 8K), audio en MP3 y
+listas de reproducción completas.
+
+
+CÓMO INSTALARLO
+---------------
+1. Haz doble clic en "DescargadorYouTube-Setup.exe".
+2. Si Windows muestra "Windows protegió su PC":
+      pulsa "Más información" y luego "Ejecutar de todas formas".
+   (Es normal: el instalador no tiene firma digital de pago.)
+3. Sigue los pasos (Siguiente -> Instalar). Se crea un acceso directo
+   en el escritorio.
+
+
+CÓMO USARLO
+-----------
+1. Copia el enlace del video o de la lista de reproducción y pégalo
+   en la barra de arriba.
+2. Pulsa "Analizar". A la derecha verás la vista previa del video.
+3. Marca las resoluciones que quieras (o "Todas") y, si lo deseas,
+   la casilla de audio MP3.
+4. Pulsa "DESCARGAR". Los archivos se guardan por defecto en
+   Videos\YouTube (puedes cambiar la carpeta).
+
+
+ACTUALIZACIONES
+---------------
+El programa se actualiza solo. Cuando haya una versión nueva aparecerá
+una ventana al abrirlo: pulsa "Actualizar ahora" y listo.
+Necesita conexión a internet para actualizarse.
+
+
+AVISO IMPORTANTE
+----------------
+Descargar contenido de YouTube puede incumplir sus términos de servicio
+y los derechos de autor. Úsalo solo con videos propios, con licencia
+libre o con permiso de su autor. El autor no se hace responsable del uso
+que se le dé al programa.
+
+Más información y código fuente:
+https://github.com/Cheivancho/descargador-youtube

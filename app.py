@@ -19,7 +19,7 @@ import updater
 updater.prepare_ytdlp()  # actualiza yt-dlp si hay versión nueva (debe ir antes de importarlo)
 
 import yt_dlp  # noqa: E402
-from PIL import Image, ImageTk  # noqa: E402
+from PIL import Image, ImageOps, ImageTk  # noqa: E402
 
 # Permite usar el ffmpeg.exe que esté junto al ejecutable
 _APP_DIR = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
@@ -39,7 +39,7 @@ CORAL_SOFT = "#f77a99"
 MUTED = "#a0607a"
 FONT = "Segoe UI"
 
-THUMB_W, THUMB_H = 380, 214
+THUMB_W, THUMB_H = 320, 180
 
 
 def fmt_num(n):
@@ -69,7 +69,7 @@ class App(tk.Tk):
         super().__init__()
         self.title("Descargador de YouTube")
         self.geometry("1020x640")
-        self.minsize(900, 560)
+        self.minsize(960, 640)
         self.configure(bg=BG)
         try:
             self.iconbitmap(os.path.join(_RES_DIR, "icon.ico"))
@@ -171,7 +171,7 @@ class App(tk.Tk):
         right = tk.Frame(body, bg=PANEL)
         right.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
         rin = tk.Frame(right, bg=PANEL)
-        rin.pack(fill="both", expand=True, padx=20, pady=18)
+        rin.pack(fill="both", expand=True, padx=20, pady=14)
 
         # Zona inferior: se empaqueta primero con side="bottom" para que SIEMPRE sea visible
         acts = tk.Frame(rin, bg=PANEL)
@@ -192,26 +192,30 @@ class App(tk.Tk):
         self.bar = ttk.Progressbar(rin, maximum=100, style="Coral.Horizontal.TProgressbar")
         self.bar.pack(side="bottom", fill="x", pady=(0, 6))
 
-        self.thumb = tk.Label(rin, bg=FIELD, fg=MUTED, text="Vista previa", font=(FONT, 11),
-                              width=1, height=1)
-        self.thumb.pack(fill="x", ipady=(THUMB_H // 2 - 10))
+        # Contenedor de tamaño fijo: la miniatura nunca se encoge ni depende del largo del título
+        self.thumb_box = tk.Frame(rin, bg=FIELD, height=THUMB_H)
+        self.thumb_box.pack(fill="x")
+        self.thumb_box.pack_propagate(False)
+        self.thumb = tk.Label(self.thumb_box, bg=FIELD, fg=MUTED, text="Vista previa", font=(FONT, 11), bd=0)
+        self.thumb.place(relx=0.5, rely=0.5, anchor="center")
         self.dur_badge = self._label(self.thumb, "", 9, True, "white", "#000000", padx=6, pady=1)
 
-        self.title_lbl = self._label(rin, "Sin video", 13, True, CORAL, PANEL, wraplength=380, justify="left")
-        self.title_lbl.pack(anchor="w", pady=(10, 2), fill="x")
+        self.title_lbl = self._label(rin, "Sin video", 12, True, CORAL, PANEL, wraplength=360, justify="left",
+                                     anchor="w")
+        self.title_lbl.pack(anchor="w", pady=(8, 2), fill="x")
         self.chan_lbl = self._label(rin, "", 10, False, CORAL_SOFT, PANEL, anchor="w")
         self.chan_lbl.pack(fill="x")
 
         self.meta = {}
         grid = tk.Frame(rin, bg=PANEL)
-        grid.pack(fill="x", pady=8)
-        grid.columnconfigure((0, 1, 2), weight=1, uniform="m")
-        for i, key in enumerate(["Duración", "Vistas", "Publicado", "Mejor calidad", "Resoluciones", "Likes"]):
+        grid.pack(fill="x", pady=(8, 4))
+        grid.columnconfigure((0, 1), weight=1, uniform="m")
+        for i, key in enumerate(["Duración", "Vistas", "Publicado", "Likes", "Mejor calidad", "Resoluciones"]):
             cell = tk.Frame(grid, bg=PANEL)
-            cell.grid(row=i // 3, column=i % 3, sticky="w", pady=3)
-            self._label(cell, key.upper(), 8, True, MUTED, PANEL).pack(anchor="w")
-            v = self._label(cell, "—", 11, True, CORAL, PANEL)
-            v.pack(anchor="w")
+            cell.grid(row=i // 2, column=i % 2, sticky="w", pady=2)
+            self._label(cell, key.upper() + "  ", 8, True, MUTED, PANEL).pack(side="left")
+            v = self._label(cell, "—", 10, True, CORAL, PANEL)
+            v.pack(side="left")
             self.meta[key] = v
 
     def _update_dl_style(self):
@@ -304,7 +308,8 @@ class App(tk.Tk):
 
     def _apply_info(self, info, is_pl, heights, data, fps):
         self.is_playlist = is_pl
-        self.title_lbl.config(text=info.get("title") or "Sin título")
+        title = info.get("title") or "Sin título"
+        self.title_lbl.config(text=title if len(title) <= 80 else title[:79].rstrip() + "…")
         if is_pl:
             n = len(info.get("entries") or [])
             self.chan_lbl.config(text=info.get("uploader") or info.get("channel") or "Playlist")
@@ -321,18 +326,23 @@ class App(tk.Tk):
             self.dur_badge.place(relx=1.0, rely=1.0, x=-8, y=-8, anchor="se")
         for k, v in vals.items():
             self.meta[k].config(text=v)
-        if data:
-            try:
-                img = Image.open(io.BytesIO(data)).convert("RGB")
-                img.thumbnail((THUMB_W, THUMB_H))
-                self.thumb_img = ImageTk.PhotoImage(img)
-                self.thumb.config(image=self.thumb_img, text="")
-                self.thumb.pack_configure(ipady=0)
-            except Exception:  # noqa: BLE001
-                pass
+        self._set_thumbnail(data)
         self._show_resolutions(heights)
         self.status.set("Playlist: se usará la mejor calidad hasta la resolución elegida."
                         if is_pl else f"{len(heights)} resoluciones disponibles. Elige y descarga.")
+
+    def _set_thumbnail(self, data):
+        """Muestra la miniatura recortada a 16:9; si no hay o falla, vuelve al marcador."""
+        try:
+            if not data:
+                raise ValueError("sin miniatura")
+            img = ImageOps.fit(Image.open(io.BytesIO(data)).convert("RGB"), (THUMB_W, THUMB_H))
+            self.thumb_img = ImageTk.PhotoImage(img)
+            self.thumb.config(image=self.thumb_img, text="", width=THUMB_W, height=THUMB_H)
+        except Exception:  # noqa: BLE001
+            self.thumb_img = None
+            self.thumb.config(image="", text="Sin vista previa", width=0, height=0)
+            self.dur_badge.place_forget()
 
     # ---------- Descarga ----------
     def download(self):

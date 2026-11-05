@@ -7,7 +7,8 @@ audio en MP3 y playlists completas. Muestra una vista previa con las caracterís
 ## Instalación (para todo el mundo)
 
 1. Entra en la sección **[Releases](../../releases/latest)** de este repositorio.
-2. Descarga **`DescargadorYouTube-Setup.exe`**.
+2. Descarga **`DescargadorYouTube.zip`** (trae el instalador y un archivo `Leeme.txt` con las instrucciones), descomprímelo
+   y abre `DescargadorYouTube-Setup.exe`. También puedes descargar el `.exe` suelto.
 3. Haz doble clic y sigue los pasos (Siguiente → Instalar).
 
 > **Aviso de Windows:** como el instalador no está firmado digitalmente, Windows puede mostrar
@@ -38,7 +39,8 @@ y un `ffmpeg.exe` en `vendor\`.
 ```
 
 Genera `output\DescargadorYouTube-Setup.exe`. Para publicar una versión nueva: sube el número de
-`VERSION` en `updater.py`, compila y crea una Release con tag `vX.Y.Z` adjuntando el instalador.
+`VERSION` en `updater.py`, haz commit y ejecuta `.elease.ps1 -Notas "qué cambió"`, que compila, genera el `.zip`
+y crea la Release `vX.Y.Z` en GitHub.
 
 ## Avisos
 
