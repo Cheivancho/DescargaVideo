@@ -57,8 +57,7 @@ y un `ffmpeg.exe` en `vendor\`.
 ```
 
 Genera `output\DescargadorYouTube-Setup.exe`. Para publicar una versión nueva: sube el número de
-`VERSION` en `updater.py`, haz commit y ejecuta `.
-elease.ps1 -Notas "qué cambió"`, que compila, genera el `.zip`
+`VERSION` en `updater.py`, haz commit y ejecuta `.\release.ps1 -Notas "qué cambió"`, que compila, genera el `.zip`
 y crea la Release `vX.Y.Z` en GitHub.
 
 ## Avisos
