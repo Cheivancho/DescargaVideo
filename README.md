@@ -1,0 +1,50 @@
+# Descargador de YouTube
+
+Aplicación de escritorio para Windows con interfaz oscura para descargar videos de YouTube
+en **todas las resoluciones que el video tenga disponibles** (144p hasta 4K/8K), además de
+audio en MP3 y playlists completas. Muestra una vista previa con las características del video.
+
+## Instalación (para todo el mundo)
+
+1. Entra en la sección **[Releases](../../releases/latest)** de este repositorio.
+2. Descarga **`DescargadorYouTube-Setup.exe`**.
+3. Haz doble clic y sigue los pasos (Siguiente → Instalar).
+
+> **Aviso de Windows:** como el instalador no está firmado digitalmente, Windows puede mostrar
+> *"Windows protegió su PC"*. Pulsa **Más información → Ejecutar de todas formas**.
+> Es normal en programas pequeños e independientes.
+
+## Actualizaciones automáticas
+
+- Al abrir la app, si hay una versión nueva aparece una ventana de **actualización disponible**.
+  Pulsa **Actualizar ahora** y se instala y reabre sola.
+- **yt-dlp** (el motor de descarga) se actualiza solo en segundo plano, porque YouTube cambia
+  con frecuencia. No tienes que hacer nada.
+- Necesita conexión a internet para actualizar; sin ella la app sigue funcionando.
+
+## Uso
+
+1. Pega el enlace del video o playlist y pulsa **Analizar**.
+2. Elige una, varias o todas las resoluciones (y opcionalmente el audio MP3).
+3. Pulsa **DESCARGAR**. Se guarda por defecto en `Videos\YouTube`.
+
+## Compilar desde el código
+
+Requisitos: Python 3.12 (`pip install yt-dlp pillow pyinstaller`), [Inno Setup 6](https://jrsoftware.org/isinfo.php)
+y un `ffmpeg.exe` en `vendor\`.
+
+```powershell
+.\build.ps1
+```
+
+Genera `output\DescargadorYouTube-Setup.exe`. Para publicar una versión nueva: sube el número de
+`VERSION` en `updater.py`, compila y crea una Release con tag `vX.Y.Z` adjuntando el instalador.
+
+## Avisos
+
+- **Uso responsable:** descargar contenido de YouTube puede incumplir sus términos de servicio y los
+  derechos de autor. Usa esta herramienta solo con contenido propio, con licencia libre o con permiso
+  de su autor. El autor no se hace responsable del uso que se le dé.
+- El instalador incluye [FFmpeg](https://ffmpeg.org/) (build de gyan.dev, licencia GPL v3;
+  código fuente en <https://ffmpeg.org/download.html>) y usa [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense).
+- El código de esta aplicación se publica bajo licencia MIT.
