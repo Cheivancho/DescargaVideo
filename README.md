@@ -27,7 +27,25 @@ audio en MP3 y playlists completas. Muestra una vista previa con las caracterís
 
 1. Pega el enlace del video o playlist y pulsa **Analizar**.
 2. Elige una, varias o todas las resoluciones (y opcionalmente el audio MP3).
-3. Pulsa **DESCARGAR**. Se guarda por defecto en `Videos\YouTube`.
+3. Elige el **formato de salida** (ver tabla).
+4. Pulsa **DESCARGAR**. Se guarda por defecto en `Videos\YouTube`.
+
+### Formatos de salida
+
+Por encima de 1080p YouTube solo ofrece VP9/AV1, que programas como Adobe Media Encoder o
+Resolume Alley no abren bien. La app descarga la mejor calidad y la convierte una sola vez:
+
+| Formato | Contenedor | Uso recomendado |
+|---|---|---|
+| H.264 + AAC (por defecto) | MP4 | Uso general, ligero |
+| H.265 / HEVC + AAC | MP4 | Archivos más pequeños |
+| ProRes 422 HQ / ProRes 422 | MOV | Media Encoder, edición |
+| DNxHR HQ | MOV | Premiere, Avid, DaVinci |
+| HAP / HAP Q | MOV | Resolume |
+| Motion JPEG | MOV | Intra-frame ligero |
+| Original de YouTube | MP4 | Sin convertir (VP9/AV1 + Opus) |
+
+ProRes, DNxHR y HAP generan archivos muy pesados (varios GB por minuto en 4K).
 
 ## Compilar desde el código
 
@@ -39,7 +57,8 @@ y un `ffmpeg.exe` en `vendor\`.
 ```
 
 Genera `output\DescargadorYouTube-Setup.exe`. Para publicar una versión nueva: sube el número de
-`VERSION` en `updater.py`, haz commit y ejecuta `.elease.ps1 -Notas "qué cambió"`, que compila, genera el `.zip`
+`VERSION` en `updater.py`, haz commit y ejecuta `.
+elease.ps1 -Notas "qué cambió"`, que compila, genera el `.zip`
 y crea la Release `vX.Y.Z` en GitHub.
 
 ## Avisos

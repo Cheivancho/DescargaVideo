@@ -23,7 +23,10 @@ CÓMO USARLO
 2. Pulsa "Analizar". A la derecha verás la vista previa del video.
 3. Marca las resoluciones que quieras (o "Todas") y, si lo deseas,
    la casilla de audio MP3.
-4. Pulsa "DESCARGAR". Los archivos se guardan por defecto en
+4. Elige el "Formato de salida": H.264 (por defecto), ProRes o DNxHR
+   para Media Encoder y edición, HAP para Resolume, etc. Los formatos
+   ProRes, DNxHR y HAP generan archivos muy pesados.
+5. Pulsa "DESCARGAR". Los archivos se guardan por defecto en
    Videos\YouTube (puedes cambiar la carpeta).
 
 
