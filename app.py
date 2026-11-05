@@ -8,6 +8,8 @@ Requiere: yt-dlp, Pillow y ffmpeg (en el PATH o junto al ejecutable).
 import io
 import os
 import queue
+import re
+import subprocess
 import sys
 import threading
 import tkinter as tk
@@ -26,6 +28,12 @@ _APP_DIR = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else 
 os.environ["PATH"] = _APP_DIR + os.pathsep + os.environ.get("PATH", "")
 
 _RES_DIR = getattr(sys, "_MEIPASS", _APP_DIR)
+
+OUT_FORMATS = {
+    "H.264 + AAC (MP4, ligero y compatible)": "h264",
+    "ProRes 422 HQ (MOV, para Media Encoder / edición)": "prores",
+    "HAP (MOV, para Resolume)": "hap",
+}
 
 PLAYLIST_HEIGHTS = [2160, 1440, 1080, 720, 480, 360, 240, 144]
 
@@ -79,6 +87,7 @@ class App(tk.Tk):
         self.is_playlist = False
         self.res_vars = {}
         self.busy = False
+        self._out_fmt = "h264"
         self.cancel = False
         self.thumb_img = None
         self.out_dir = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Videos", "YouTube"))
@@ -149,6 +158,15 @@ class App(tk.Tk):
         self.res_hint = self._label(self.res_frame, "Analiza un enlace para ver\nlas resoluciones disponibles.",
                                     10, False, MUTED, PANEL, justify="left")
         self.res_hint.pack(anchor="w", pady=10)
+
+        tk.Frame(inner, bg=CORAL_DIM, height=1).pack(fill="x", pady=16)
+
+        self._label(inner, "FORMATO DE SALIDA", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
+        self.fmt_var = tk.StringVar(value=next(iter(OUT_FORMATS)))
+        ttk.Combobox(inner, textvariable=self.fmt_var, values=list(OUT_FORMATS), state="readonly",
+                     font=(FONT, 10)).pack(fill="x", pady=(6, 0))
+        self._label(inner, "ProRes y HAP generan archivos muy pesados (varios GB por minuto en 4K).",
+                    8, False, MUTED, PANEL).pack(anchor="w", pady=(4, 0))
 
         tk.Frame(inner, bg=CORAL_DIM, height=1).pack(fill="x", pady=16)
 
@@ -353,6 +371,7 @@ class App(tk.Tk):
         if not heights and not want_audio:
             messagebox.showwarning("Nada seleccionado", "Marca al menos una resolución o el audio MP3.")
             return
+        self._out_fmt = OUT_FORMATS[self.fmt_var.get()]
         os.makedirs(self.out_dir.get(), exist_ok=True)
         self.busy = True
         self.cancel = False
@@ -378,19 +397,75 @@ class App(tk.Tk):
         elif d["status"] == "finished":
             self.q.put(("progress", 100, "Procesando con ffmpeg…"))
 
+    def _ensure_compatible(self, path):
+        """Convierte el video descargado al formato de salida elegido.
+
+        H.264: solo recodifica lo necesario (video VP9/AV1 y/o audio Opus).
+        ProRes / HAP: recodifica siempre, genera un .mov y borra el .mp4 intermedio.
+        """
+        if not path or not path.lower().endswith(".mp4") or not os.path.isfile(path):
+            return
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        kind = self._out_fmt
+        if kind == "h264":
+            try:
+                info = subprocess.run(["ffmpeg", "-hide_banner", "-i", path], capture_output=True,
+                                      text=True, encoding="utf-8", errors="replace",
+                                      creationflags=flags).stderr
+            except OSError:
+                return
+            vid = re.search(r"Stream #.*Video: (\w+)", info)
+            aud = re.search(r"Stream #.*Audio: (\w+)", info)
+            v_ok = bool(vid) and vid.group(1) == "h264"
+            a_ok = (not aud) or aud.group(1) == "aac"
+            if v_ok and a_ok:
+                return
+            dest = path[:-4] + ".compat.mp4"
+            vcodec = ["-c:v", "copy"] if v_ok else ["-c:v", "libx264", "-crf", "17", "-preset", "medium",
+                                                     "-pix_fmt", "yuv420p"]
+            acodec = ["-c:a", "copy"] if a_ok else ["-c:a", "aac", "-b:a", "320k"]
+            extra = ["-movflags", "+faststart"]
+            label = "H.264 + AAC"
+        else:
+            dest = path[:-4] + ".mov"
+            if kind == "prores":
+                vcodec = ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0",
+                          "-pix_fmt", "yuv422p10le"]
+                label = "ProRes 422 HQ"
+            else:
+                vcodec = ["-c:v", "hap", "-format", "hap"]
+                label = "HAP"
+            acodec = ["-c:a", "pcm_s16le"]
+            extra = []
+        self.q.put(("status", f"Convirtiendo a {label} (puede tardar)…"))
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:v:0", "-map", "0:a?"]
+        cmd += vcodec + acodec + extra + [dest]
+        if subprocess.run(cmd, creationflags=flags).returncode != 0:
+            if os.path.exists(dest):
+                os.remove(dest)
+            self.q.put(("status", f"No se pudo convertir a {label}; se conserva el MP4 original."))
+            return
+        if kind == "h264":
+            os.replace(dest, path)
+        else:
+            os.remove(path)
+
     def _download_worker(self, url, heights, want_audio):
         out = self.out_dir.get()
         base = {"quiet": True, "no_warnings": True, "progress_hooks": [self._hook],
                 "ignoreerrors": False, "noplaylist": not self.is_playlist}
+        vbase = {**base, "post_hooks": [self._ensure_compatible]}
         jobs = []
         for h in heights:
             if self.is_playlist:
-                fmt = f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best"
+                fmt = (f"bestvideo[height<={h}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
+                       f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best")
                 tmpl = "%(playlist_title)s/%(playlist_index)03d - %(title)s [" + str(h) + "p].%(ext)s"
             else:
-                fmt = f"bestvideo[height={h}]+bestaudio/best[height={h}]"
+                fmt = (f"bestvideo[height={h}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
+                       f"bestvideo[height={h}]+bestaudio/best[height={h}]")
                 tmpl = "%(title)s [" + str(h) + "p].%(ext)s"
-            jobs.append((f"{h}p", {**base, "format": fmt, "merge_output_format": "mp4",
+            jobs.append((f"{h}p", {**vbase, "format": fmt, "merge_output_format": "mp4",
                                    "outtmpl": os.path.join(out, tmpl)}))
         if want_audio:
             tmpl = ("%(playlist_title)s/%(playlist_index)03d - %(title)s.%(ext)s"
