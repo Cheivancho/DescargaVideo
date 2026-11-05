@@ -6,7 +6,8 @@ Set-Location $PSScriptRoot
 
 $version = (Select-String -Path updater.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
 $tag = "v$version"
-if (gh release view $tag 2>$null) { throw "La release $tag ya existe. Sube VERSION en updater.py." }
+cmd /c "gh release view $tag >nul 2>nul"
+if ($LASTEXITCODE -eq 0) { throw "La release $tag ya existe. Sube VERSION en updater.py." }
 
 & "$PSScriptRoot\build.ps1"
 if ($LASTEXITCODE) { throw "Falló la compilación" }
@@ -20,6 +21,8 @@ $zip = "output\DescargadorYouTube.zip"
 Remove-Item $zip -ErrorAction SilentlyContinue
 Compress-Archive -Path "$stage\*" -DestinationPath $zip
 
-gh release create $tag output\DescargadorYouTube-Setup.exe $zip --title "Descargador de YouTube $version" --notes $Notas
+$notesFile = Join-Path $env:TEMP "release-notes.md"
+[IO.File]::WriteAllText($notesFile, $Notas, (New-Object Text.UTF8Encoding $false))
+gh release create $tag output\DescargadorYouTube-Setup.exe $zip --title "Descargador de YouTube $version" --notes-file $notesFile
 if ($LASTEXITCODE) { throw "Falló la publicación" }
 Write-Host "Publicada $tag" -ForegroundColor Green
