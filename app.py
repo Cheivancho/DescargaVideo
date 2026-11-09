@@ -23,6 +23,7 @@ import tkinter as tk
 import traceback
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from tkinter import filedialog, messagebox, ttk
 
 import updater
@@ -247,9 +248,100 @@ class ProgressTracker:
         return self.last, " · ".join(parts)
 
 
+AUDIO_FORMATS = {  # nombre -> (códec de yt-dlp, extensión, ¿admite calidad en kbps?)
+    "MP3": ("mp3", ".mp3", True), "M4A": ("m4a", ".m4a", True), "Opus": ("opus", ".opus", True),
+    "WAV": ("wav", ".wav", False), "FLAC": ("flac", ".flac", False),
+}
+AUDIO_QUALITIES = ["320", "256", "192", "128"]
+SUBS_MODES = ["Incrustar (MP4)", "Guardar .srt"]
+
+
+@dataclass
+class Job:
+    """Un trabajo de yt-dlp: una resolución (o el audio) de un ítem de descarga."""
+    item: dict
+    label: str
+    opts: dict
+    ext: str  # extensión final del archivo (tras convertir)
+    spec: dict
+
+
+def parse_langs(text: str) -> list[str]:
+    """'es, en' -> ['es', 'en']. Descarta basura; si no queda nada, usa es,en."""
+    langs = [x for x in re.split(r"[,\s;]+", text or "") if re.fullmatch(r"[A-Za-z0-9*_.-]{1,20}", x)]
+    return langs or ["es", "en"]
+
+
+def short_title(title: str | None, n: int = 28) -> str:
+    title = (title or "").strip()
+    return title if len(title) <= n else title[:n - 1].rstrip() + "…"
+
+
+def build_format_selector(height: int, is_playlist: bool = False, fps: int | None = None) -> str:
+    """Selector de formato de yt-dlp: prefiere H.264 + AAC y cae a lo que haya. 'fps' limita los cuadros por segundo."""
+    f = f"[fps<=?{int(fps)}]" if fps else ""
+    if is_playlist:  # en listas: la mejor calidad HASTA la altura elegida
+        return (f"bestvideo[height<={height}]{f}[vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
+                f"bestvideo[height<={height}]{f}+bestaudio/best[height<={height}]{f}/best")
+    return (f"bestvideo[height={height}]{f}[vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
+            f"bestvideo[height={height}]{f}+bestaudio/best[height={height}]{f}")
+
+
+def video_template(height: int, is_playlist: bool, tag: str = "") -> str:
+    name = f"%(title)s [{height}p]{tag}.%(ext)s"
+    return "%(playlist_title)s/%(playlist_index)03d - " + name if is_playlist else name
+
+
+def audio_template(is_playlist: bool) -> str:
+    return "%(playlist_title)s/%(playlist_index)03d - %(title)s.%(ext)s" if is_playlist else "%(title)s.%(ext)s"
+
+
+_THUMB_CONV = {"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"}
+
+
+def video_extras(spec: dict, ext: str) -> dict:
+    """Opciones de yt-dlp para subtítulos, miniatura y metadatos de un video cuya extensión final es 'ext'."""
+    opts: dict = {}
+    pps: list[dict] = []
+    if spec.get("subs"):
+        opts.update(writesubtitles=True, writeautomaticsub=True, subtitleslangs=list(spec["subs_langs"]))
+        if spec.get("subs_mode") == "embed" and ext == ".mp4":
+            pps.append({"key": "FFmpegEmbedSubtitle", "already_have_subtitle": False})
+        else:  # MOV y demás contenedores no admiten subtítulos incrustados: se guardan aparte
+            pps.append({"key": "FFmpegSubtitlesConvertor", "format": "srt", "when": "before_dl"})
+    if spec.get("embed") and ext == ".mp4":
+        opts["writethumbnail"] = True  # la carátula se incrusta después de convertir (ver _embed_thumbnail)
+        pps.insert(0, dict(_THUMB_CONV))
+        pps.append({"key": "FFmpegMetadata", "add_metadata": True})
+    if pps:
+        opts["postprocessors"] = pps
+    return opts
+
+
+def audio_extras(spec: dict) -> dict:
+    """Opciones de yt-dlp para el trabajo de audio: extracción, metadatos y miniatura (solo MP3/M4A)."""
+    codec, _ext, has_q = AUDIO_FORMATS[spec["audio_fmt"]]
+    extract: dict = {"key": "FFmpegExtractAudio", "preferredcodec": codec}
+    if has_q:
+        extract["preferredquality"] = spec["audio_q"]
+    opts: dict = {}
+    pps = [extract]
+    if spec.get("embed"):
+        if codec in ("mp3", "m4a"):
+            opts["writethumbnail"] = True
+            # La carátula la incrusta la app con ffmpeg (EmbedThumbnail de yt-dlp exigiría ffprobe)
+            pps = [dict(_THUMB_CONV), extract, {"key": "FFmpegMetadata", "add_metadata": True}]
+        elif codec != "wav":
+            pps.append({"key": "FFmpegMetadata", "add_metadata": True})
+    opts["postprocessors"] = pps
+    return opts
+
+
 DEFAULT_SETTINGS = {
     "out_dir": os.path.join(os.path.expanduser("~"), "Videos", "YouTube"),
     "fmt": "h264", "audio": False, "preset": "", "geometry": "",
+    "audio_fmt": "MP3", "audio_q": "320", "subs": False, "subs_langs": "es,en", "subs_mode": SUBS_MODES[0],
+    "embed": False,
 }
 _YT_LINK = re.compile(r"^https?://(?:(?:www|m|music)\.)?(?:youtube\.com|youtu\.be)/\S+$", re.I)
 
@@ -266,6 +358,12 @@ def load_settings(state: dict | None = None) -> dict:
         s["fmt"] = DEFAULT_SETTINGS["fmt"]
     if not re.fullmatch(r"\d{3,5}x\d{3,5}", s["geometry"]):
         s["geometry"] = ""
+    if s["audio_fmt"] not in AUDIO_FORMATS:
+        s["audio_fmt"] = "MP3"
+    if s["audio_q"] not in AUDIO_QUALITIES:
+        s["audio_q"] = "320"
+    if s["subs_mode"] not in SUBS_MODES:
+        s["subs_mode"] = SUBS_MODES[0]
     return s
 
 
@@ -304,8 +402,8 @@ class App(tk.Tk):
         self.ui = max(self.winfo_fpixels("1i") / 96, 1.0)  # factor de escala por DPI
         self.thumb_w, self.thumb_h = self.px(THUMB_W), self.px(THUMB_H)
         self.title("Descargador de YouTube")
-        self.geometry(f"{self.px(1020)}x{self.px(640)}")
-        self.minsize(self.px(960), self.px(640))
+        self.geometry(f"{self.px(1060)}x{self.px(700)}")
+        self.minsize(self.px(1000), self.px(680))
         self.configure(bg=BG)
         try:
             self.iconbitmap(os.path.join(_RES_DIR, "icon.ico"))
@@ -324,7 +422,7 @@ class App(tk.Tk):
         self._ff_proc = None
         self.res_vars = {}
         self.busy = False
-        self._out_fmt = "h264"
+        self.cur_spec = {}
         self.cancel = False
         self.thumb_img = None
         self.settings = load_settings()
@@ -345,13 +443,14 @@ class App(tk.Tk):
         m = re.fullmatch(r"(\d+)x(\d+)", self.settings["geometry"])
         if not m:
             return
-        w = min(max(int(m[1]), self.px(960)), self.winfo_screenwidth())
-        h = min(max(int(m[2]), self.px(640)), self.winfo_screenheight())
+        w = min(max(int(m[1]), self.px(1000)), self.winfo_screenwidth())
+        h = min(max(int(m[2]), self.px(680)), self.winfo_screenheight())
         self.geometry(f"{w}x{h}")
 
     def _save_settings(self) -> None:
+        self.settings.update({k: var.get() for k, var in self.v.items()})
         self.settings.update(out_dir=self.out_dir.get(), fmt=OUT_FORMATS.get(self.fmt_var.get(), "h264"),
-                             audio=bool(self.audio_var.get()), geometry=f"{self.winfo_width()}x{self.winfo_height()}")
+                             geometry=f"{self.winfo_width()}x{self.winfo_height()}")
         updater.update_state(settings=self.settings)
 
     def _on_close(self) -> None:
@@ -388,6 +487,18 @@ class App(tk.Tk):
         s.configure("TEntry", fieldbackground=FIELD, foreground=CORAL, insertcolor=CORAL,
                     bordercolor=CORAL_DIM, lightcolor=FIELD, darkcolor=FIELD, padding=8)
         s.map("TEntry", bordercolor=[("focus", CORAL)])
+        s.configure("Dark.TNotebook", background=PANEL, borderwidth=0, tabmargins=(0, 0, 0, 6), bordercolor=PANEL,
+                    lightcolor=PANEL, darkcolor=PANEL)
+        s.configure("Dark.TNotebook.Tab", lightcolor=FIELD, bordercolor=FIELD)
+        s.configure("Dark.TNotebook.Tab", background=FIELD, foreground=CORAL_SOFT, padding=(14, 6), borderwidth=0,
+                    font=(FONT, 10, "bold"))
+        s.map("Dark.TNotebook.Tab", background=[("selected", CORAL_DIM)], foreground=[("selected", "white")])
+        s.configure("TCombobox", fieldbackground=FIELD, background=FIELD, foreground=CORAL, arrowcolor=CORAL,
+                    bordercolor=CORAL_DIM, lightcolor=FIELD, darkcolor=FIELD, padding=4)
+        s.map("TCombobox", fieldbackground=[("readonly", FIELD)], foreground=[("readonly", CORAL)])
+        self.option_add("*TCombobox*Listbox.background", FIELD)
+        self.option_add("*TCombobox*Listbox.foreground", CORAL)
+        self.option_add("*TCombobox*Listbox.selectBackground", CORAL_DIM)
         s.configure("Coral.Horizontal.TProgressbar", troughcolor=FIELD, background=CORAL,
                     bordercolor=PANEL, lightcolor=CORAL, darkcolor=CORAL, thickness=8)
 
@@ -399,6 +510,23 @@ class App(tk.Tk):
                       activeforeground=BG if solid else "white",
                       disabledforeground="#6b4757", padx=14, pady=7, **kw)
         return b
+
+    def _tab(self, name):
+        """Pestaña del panel izquierdo; devuelve el marco interior donde colocar los controles."""
+        outer = tk.Frame(self.tabs, bg=PANEL)
+        self.tabs.add(outer, text=f"  {name}  ")
+        inner = tk.Frame(outer, bg=PANEL)
+        inner.pack(fill="both", expand=True, padx=4, pady=6)
+        return inner
+
+    def _check(self, parent, text, var, **kw):
+        return tk.Checkbutton(parent, text="  " + text, variable=var, bg=PANEL, fg=CORAL, activebackground=PANEL,
+                              activeforeground=CORAL_SOFT, selectcolor=FIELD, font=(FONT, 10), bd=0,
+                              highlightthickness=0, cursor="hand2", **kw)
+
+    def _sync_audio_quality(self):
+        has_q = AUDIO_FORMATS.get(self.v["audio_fmt"].get(), ("", "", False))[2]
+        self.audio_q_box.config(state="readonly" if has_q else "disabled")
 
     def _label(self, parent, text="", size=10, bold=False, color=CORAL, bg=BG, **kw):
         return tk.Label(parent, text=text, bg=bg, fg=color, font=(FONT, size, "bold" if bold else "normal"), **kw)
@@ -440,50 +568,90 @@ class App(tk.Tk):
         body.columnconfigure(1, weight=1, uniform="c")
         body.rowconfigure(0, weight=1)
 
-        # ----- Panel izquierdo: opciones -----
+        # ----- Panel izquierdo: opciones (pestañas) -----
         left = tk.Frame(body, bg=PANEL)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         inner = tk.Frame(left, bg=PANEL)
-        inner.pack(fill="both", expand=True, padx=20, pady=18)
+        inner.pack(fill="both", expand=True, padx=16, pady=14)
 
-        self._label(inner, "RESOLUCIONES", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
-        row = tk.Frame(inner, bg=PANEL)
+        # Destino: se empaqueta primero (side="bottom") para que SIEMPRE sea visible
+        dest_box = tk.Frame(inner, bg=PANEL)
+        dest_box.pack(side="bottom", fill="x", pady=(10, 0))
+        self._label(dest_box, "CARPETA DE DESTINO", 9, True, CORAL_SOFT, PANEL).pack(anchor="w", pady=(0, 6))
+        dest = tk.Frame(dest_box, bg=PANEL)
+        dest.pack(fill="x")
+        ttk.Entry(dest, textvariable=self.out_dir).pack(side="left", fill="x", expand=True)
+        self._btn(dest, "…", self._browse).pack(side="left", padx=(8, 0))
+
+        self.tabs = ttk.Notebook(inner, style="Dark.TNotebook")
+        self.tabs.pack(fill="both", expand=True)
+        tab_video = self._tab("Video")
+        tab_extra = self._tab("Extras")
+
+        # --- Pestaña Video ---
+        self._label(tab_video, "RESOLUCIONES", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
+        row = tk.Frame(tab_video, bg=PANEL)
         row.pack(fill="x", pady=(6, 8))
         self._btn(row, "Todas", lambda: self._set_all(True)).pack(side="left")
         self._btn(row, "Ninguna", lambda: self._set_all(False)).pack(side="left", padx=6)
 
-        self.res_frame = tk.Frame(inner, bg=PANEL)
+        self.res_frame = tk.Frame(tab_video, bg=PANEL)
         self.res_frame.pack(fill="x")
         self.res_hint = self._label(self.res_frame, "Analiza un enlace para ver\nlas resoluciones disponibles.",
                                     10, False, MUTED, PANEL, justify="left")
         self.res_hint.pack(anchor="w", pady=10)
 
-        tk.Frame(inner, bg=CORAL_DIM, height=1).pack(fill="x", pady=16)
+        tk.Frame(tab_video, bg=CORAL_DIM, height=1).pack(fill="x", pady=12)
 
-        self._label(inner, "FORMATO DE SALIDA", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
+        self._label(tab_video, "FORMATO DE SALIDA", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
         self.fmt_var = tk.StringVar(value=next((k for k, v in OUT_FORMATS.items() if v == self.settings["fmt"]),
                                                next(iter(OUT_FORMATS))))
-        ttk.Combobox(inner, textvariable=self.fmt_var, values=list(OUT_FORMATS), state="readonly",
+        ttk.Combobox(tab_video, textvariable=self.fmt_var, values=list(OUT_FORMATS), state="readonly",
                      font=(FONT, 10)).pack(fill="x", pady=(6, 0))
-        self._label(inner, "ProRes y HAP generan archivos muy pesados (varios GB por minuto en 4K).",
-                    8, False, MUTED, PANEL).pack(anchor="w", pady=(4, 0))
+        self._label(tab_video, "ProRes y HAP generan archivos muy pesados (varios GB por minuto en 4K).",
+                    8, False, MUTED, PANEL, wraplength=self.px(380), justify="left").pack(anchor="w", pady=(4, 0))
 
-        tk.Frame(inner, bg=CORAL_DIM, height=1).pack(fill="x", pady=16)
+        # --- Pestaña Extras ---
+        s = self.settings
+        self.v = {
+            "audio": tk.BooleanVar(value=s["audio"]), "audio_fmt": tk.StringVar(value=s["audio_fmt"]),
+            "audio_q": tk.StringVar(value=s["audio_q"]), "subs": tk.BooleanVar(value=s["subs"]),
+            "subs_langs": tk.StringVar(value=s["subs_langs"]), "subs_mode": tk.StringVar(value=s["subs_mode"]),
+            "embed": tk.BooleanVar(value=s["embed"]),
+        }
+        self.audio_var = self.v["audio"]
 
-        self._label(inner, "EXTRAS", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
-        self.audio_var = tk.BooleanVar(value=self.settings["audio"])
-        tk.Checkbutton(inner, text="  Descargar también solo audio (MP3)", variable=self.audio_var,
-                       bg=PANEL, fg=CORAL, activebackground=PANEL, activeforeground=CORAL_SOFT,
-                       selectcolor=FIELD, font=(FONT, 10), bd=0, highlightthickness=0,
-                       cursor="hand2").pack(anchor="w", pady=8)
+        self._label(tab_extra, "AUDIO", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
+        self._check(tab_extra, "Descargar también solo audio", self.v["audio"]).pack(anchor="w", pady=(6, 2))
+        arow = tk.Frame(tab_extra, bg=PANEL)
+        arow.pack(fill="x", pady=(0, 4))
+        self._label(arow, "Formato", 9, False, MUTED, PANEL).pack(side="left")
+        ttk.Combobox(arow, textvariable=self.v["audio_fmt"], values=list(AUDIO_FORMATS), state="readonly", width=7,
+                     font=(FONT, 10)).pack(side="left", padx=(6, 12))
+        self._label(arow, "Calidad (kbps)", 9, False, MUTED, PANEL).pack(side="left")
+        self.audio_q_box = ttk.Combobox(arow, textvariable=self.v["audio_q"], values=AUDIO_QUALITIES, width=5,
+                                        state="readonly", font=(FONT, 10))
+        self.audio_q_box.pack(side="left", padx=6)
+        self.v["audio_fmt"].trace_add("write", lambda *_: self._sync_audio_quality())
+        self._sync_audio_quality()
 
-        tk.Frame(inner, bg=CORAL_DIM, height=1).pack(fill="x", pady=10)
+        tk.Frame(tab_extra, bg=CORAL_DIM, height=1).pack(fill="x", pady=10)
+        self._label(tab_extra, "SUBTÍTULOS", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
+        self._check(tab_extra, "Descargar subtítulos", self.v["subs"]).pack(anchor="w", pady=(6, 2))
+        srow = tk.Frame(tab_extra, bg=PANEL)
+        srow.pack(fill="x", pady=(0, 4))
+        self._label(srow, "Idiomas", 9, False, MUTED, PANEL).pack(side="left")
+        ttk.Entry(srow, textvariable=self.v["subs_langs"], width=10).pack(side="left", padx=(6, 12))
+        ttk.Combobox(srow, textvariable=self.v["subs_mode"], values=SUBS_MODES, state="readonly", width=16,
+                     font=(FONT, 10)).pack(side="left")
+        self._label(tab_extra, "Incrustar solo funciona en MP4; en MOV se guarda el .srt aparte.", 8, False, MUTED,
+                    PANEL, wraplength=self.px(380), justify="left").pack(anchor="w")
 
-        self._label(inner, "CARPETA DE DESTINO", 9, True, CORAL_SOFT, PANEL).pack(anchor="w", pady=(0, 6))
-        dest = tk.Frame(inner, bg=PANEL)
-        dest.pack(fill="x")
-        ttk.Entry(dest, textvariable=self.out_dir).pack(side="left", fill="x", expand=True)
-        self._btn(dest, "…", self._browse).pack(side="left", padx=(8, 0))
+        tk.Frame(tab_extra, bg=CORAL_DIM, height=1).pack(fill="x", pady=10)
+        self._label(tab_extra, "MINIATURA Y METADATOS", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
+        self._check(tab_extra, "Incrustar miniatura y metadatos", self.v["embed"]).pack(anchor="w", pady=(6, 2))
+        self._label(tab_extra, "Solo MP4, MP3 y M4A (en MOV, Opus, WAV y FLAC se ignora la miniatura).", 8, False,
+                    MUTED, PANEL, wraplength=self.px(380), justify="left").pack(anchor="w")
 
         # ----- Panel derecho: preview -----
         right = tk.Frame(body, bg=PANEL)
@@ -801,6 +969,19 @@ class App(tk.Tk):
             self.dur_badge.place_forget()
 
     # ---------- Descarga ----------
+    def _collect_spec(self) -> dict:
+        """Lee la interfaz y devuelve las opciones del trabajo (un dict simple, apto para la cola y los presets)."""
+        v = {k: var.get() for k, var in self.v.items()}
+        return {
+            "out_dir": self.out_dir.get(),
+            "kind": OUT_FORMATS[self.fmt_var.get()],
+            "heights": [h for h, var in self.res_vars.items() if var.get()],
+            "audio": bool(v["audio"]), "audio_fmt": v["audio_fmt"], "audio_q": v["audio_q"],
+            "subs": bool(v["subs"]), "subs_langs": parse_langs(v["subs_langs"]),
+            "subs_mode": "embed" if str(v["subs_mode"]).startswith("Incrustar") else "srt",
+            "embed": bool(v["embed"]),
+        }
+
     def download(self):
         if self.busy:
             return
@@ -808,13 +989,16 @@ class App(tk.Tk):
             self.status.set("La URL cambió. Vuelve a pulsar Analizar.")
             self._set_dl(False)
             return
-        heights = [h for h, v in self.res_vars.items() if v.get()]
-        want_audio = self.audio_var.get()
-        if not heights and not want_audio:
-            messagebox.showwarning("Nada seleccionado", "Marca al menos una resolución o el audio MP3.")
+        spec = self._collect_spec()
+        if not spec["heights"] and not spec["audio"]:
+            messagebox.showwarning("Nada seleccionado", "Marca al menos una resolución o el audio.")
             return
-        self._out_fmt = OUT_FORMATS[self.fmt_var.get()]
-        os.makedirs(self.out_dir.get(), exist_ok=True)
+        os.makedirs(spec["out_dir"], exist_ok=True)
+        item = {"url": self.analyzed_url, "is_playlist": self.is_playlist, "info": self.analyzed_info,
+                "analyzed_at": self.analyzed_at, "title": self.title_lbl.cget("text"), "spec": spec}
+        self._start_download([item])
+
+    def _start_download(self, items):
         self.busy = True
         self.cancel = False
         self.last_error = ""
@@ -823,9 +1007,7 @@ class App(tk.Tk):
         self._set_dl(False)
         self.btn_an.config(state="disabled")
         self.btn_cancel.config(state="normal")
-        info = self.analyzed_info if (time.time() - self.analyzed_at) < INFO_MAX_AGE else None
-        threading.Thread(target=self._download_worker, args=(self.analyzed_url, heights, want_audio, info),
-                         daemon=True).start()
+        threading.Thread(target=self._download_worker, args=(items,), daemon=True).start()
 
     def _cancel(self):
         self.cancel = True
@@ -860,49 +1042,16 @@ class App(tk.Tk):
             except OSError:
                 time.sleep(0.3)
 
-    def _ensure_compatible(self, path):
-        """Convierte el video descargado al formato de salida elegido.
-
-        H.264: solo recodifica lo necesario (video VP9/AV1 y/o audio Opus).
-        Resto de formatos: recodifica siempre y borra el MP4 intermedio.
-        Se puede cancelar: se detiene ffmpeg, se borra el archivo parcial y se conserva el MP4 original.
-        """
-        kind = self._out_fmt
-        if kind == "original" or not path or not path.lower().endswith(".mp4") or not os.path.isfile(path):
-            return
+    def _run_ffmpeg(self, cmd, dest):
+        """Ejecuta ffmpeg de forma cancelable. Devuelve (ok, stderr). Si se cancela: lo detiene, borra
+        'dest' (archivo parcial) y lanza DownloadCancelled; el archivo de entrada no se toca."""
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        if kind == "h264":
-            try:
-                info = subprocess.run(["ffmpeg", "-hide_banner", "-i", path], capture_output=True, timeout=30,
-                                      text=True, encoding="utf-8", errors="replace",
-                                      creationflags=flags).stderr
-            except (OSError, subprocess.TimeoutExpired):
-                log.warning("No se pudo inspeccionar %s con ffmpeg", path, exc_info=True)
-                return
-            vid = re.search(r"Stream #.*Video: (\w+)", info)
-            aud = re.search(r"Stream #.*Audio: (\w+)", info)
-            v_ok = bool(vid) and vid.group(1) == "h264"
-            a_ok = (not aud) or aud.group(1) == "aac"
-            if v_ok and a_ok:
-                return
-            label, ext = "H.264 + AAC", ".mp4"
-            vcodec = ["-c:v", "copy"] if v_ok else ["-c:v", "libx264", "-crf", "17", "-preset", "medium",
-                                                     "-pix_fmt", "yuv420p"]
-            acodec = ["-c:a", "copy"] if a_ok else _AAC
-            extra = ["-movflags", "+faststart"]
-        else:
-            label, ext, vcodec, acodec, extra = RECODE_SPECS[kind]
-        dest = path[:-4] + (".compat.mp4" if ext == ".mp4" else ext)
-        self.q.put(("status", f"Convirtiendo a {label} (puede tardar)…"))
-        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:v:0", "-map", "0:a?"]
-        cmd += vcodec + acodec + extra + [dest]
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                                     encoding="utf-8", errors="replace", creationflags=flags)
-        except OSError:
+        except OSError as e:
             log.exception("No se pudo lanzar ffmpeg")
-            self.q.put(("status", f"No se pudo convertir a {label}; se conserva el MP4 original."))
-            return
+            return False, str(e)
         self._ff_proc = proc
         err = ""
         try:
@@ -918,14 +1067,106 @@ class App(tk.Tk):
         finally:
             self._ff_proc = None
         if proc.returncode != 0:
-            log.error("ffmpeg falló (%s): %s", label, (err or "").strip()[-500:])
+            log.error("ffmpeg falló: %s", (err or "").strip()[-500:])
             self._remove_quietly(dest)
+            return False, err or ""
+        return True, ""
+
+    @staticmethod
+    def _probe_codecs(path):
+        """(códec de video, códec de audio) según 'ffmpeg -i'; None si no se pudo inspeccionar."""
+        try:
+            info = subprocess.run(["ffmpeg", "-hide_banner", "-i", path], capture_output=True, timeout=30,
+                                  text=True, encoding="utf-8", errors="replace",
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stderr
+        except (OSError, subprocess.TimeoutExpired):
+            log.warning("No se pudo inspeccionar %s con ffmpeg", path, exc_info=True)
+            return None
+        vid = re.search(r"Stream #.*Video: (\w+)", info)
+        aud = re.search(r"Stream #.*Audio: (\w+)", info)
+        return (vid.group(1) if vid else None), (aud.group(1) if aud else None)
+
+    def _post_video(self, path):
+        """Post-hook de cada video: convierte al formato de salida y, en MP4, incrusta la miniatura."""
+        spec = self.cur_spec
+        self._convert(path, spec)
+        self._embed_thumbnail(path, spec)
+
+    def _post_audio(self, path):
+        """Post-hook del audio: en MP3 y M4A incrusta la miniatura como carátula."""
+        spec = self.cur_spec
+        codec = AUDIO_FORMATS[spec["audio_fmt"]][0]
+        if spec.get("embed") and codec in ("mp3", "m4a"):
+            cover = ["-disposition:v:0", "attached_pic"] if codec == "m4a" else [
+                "-id3v2_version", "3", "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"]
+            self._attach_cover(path, cover, maps=("-map", "0:a", "-map", "1:v"))  # sin pistas de datos/capítulos
+
+    def _attach_cover(self, path, extra_args, maps=("-map", "0", "-map", "1")):
+        """Añade a 'path' la imagen que dejó yt-dlp junto al archivo (.jpg) como carátula, y borra las miniaturas."""
+        if not (path and os.path.isfile(path)):
+            return
+        base, ext = os.path.splitext(path)
+        thumbs = [base + e for e in (".jpg", ".jpeg", ".png", ".webp")]
+        try:
+            thumb = next((t for t in thumbs if os.path.isfile(t)), None)
+            if thumb:
+                tmp = base + ".thumb" + ext
+                cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", path, "-i", thumb, *maps,
+                       "-c", "copy", *extra_args, tmp]
+                ok, _ = self._run_ffmpeg(cmd, tmp)
+                if ok:
+                    os.replace(tmp, path)
+                else:
+                    log.warning("No se pudo incrustar la miniatura en %s", path)
+        finally:
+            for t in thumbs:
+                self._remove_quietly(t)
+
+    def _convert(self, path, spec):
+        """Convierte el video descargado al formato de salida elegido.
+
+        H.264: solo recodifica lo necesario (video VP9/AV1 y/o audio Opus).
+        Resto de formatos: recodifica siempre y borra el MP4 intermedio.
+        Se puede cancelar: se detiene ffmpeg, se borra el archivo parcial y se conserva el MP4 original.
+        """
+        kind = spec["kind"]
+        if kind == "original" or not path or not path.lower().endswith(".mp4") or not os.path.isfile(path):
+            return
+        if kind == "h264":
+            codecs = self._probe_codecs(path)
+            if codecs is None:
+                return
+            vcodec_src, acodec_src = codecs
+            v_ok = vcodec_src == "h264"
+            a_ok = (not acodec_src) or acodec_src == "aac"
+            if v_ok and a_ok:
+                return
+            label, ext = "H.264 + AAC", ".mp4"
+            vcodec = ["-c:v", "copy"] if v_ok else ["-c:v", "libx264", "-crf", "17", "-preset", "medium",
+                                                     "-pix_fmt", "yuv420p"]
+            acodec = ["-c:a", "copy"] if a_ok else _AAC
+            extra = ["-movflags", "+faststart"]
+        else:
+            label, ext, vcodec, acodec, extra = RECODE_SPECS[kind]
+        dest = path[:-4] + (".compat.mp4" if ext == ".mp4" else ext)
+        self.q.put(("status", f"Convirtiendo a {label} (puede tardar)…"))
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:v:0", "-map", "0:a?"]
+        if ext == ".mp4" and spec.get("subs") and spec.get("subs_mode") == "embed":
+            cmd += ["-map", "0:s?", "-c:s", "copy"]  # conserva los subtítulos incrustados
+        cmd += vcodec + acodec + extra + [dest]
+        ok, _ = self._run_ffmpeg(cmd, dest)
+        if not ok:
             self.q.put(("status", f"No se pudo convertir a {label}; se conserva el MP4 original."))
             return
         if ext == ".mp4":
             os.replace(dest, path)  # sustituye al MP4 intermedio
         else:
             os.remove(path)
+
+    def _embed_thumbnail(self, path, spec):
+        """Incrusta la miniatura (.jpg que dejó yt-dlp) como carátula del MP4. Otros contenedores: no hace nada."""
+        if spec.get("embed") and path and path.lower().endswith(".mp4"):
+            self._attach_cover(path, ["-disposition:v:1", "attached_pic"])
 
     @staticmethod
     def _cleanup_orphans(out):
@@ -955,12 +1196,13 @@ class App(tk.Tk):
             return None
         return match
 
-    def _run_job(self, opts, url, info, ext):
+    def _run_job(self, opts, url, info, analyzed_at, ext):
         holder = {}
         opts = {**opts, "match_filter": self._make_skip_filter(holder, ext)}
+        fresh = info is not None and (time.time() - analyzed_at) < INFO_MAX_AGE
         with yt_dlp.YoutubeDL(opts) as ydl:
             holder["ydl"] = ydl
-            if info is not None:
+            if fresh:
                 try:  # reutiliza el análisis: evita re-extraer el video por cada resolución
                     ydl.process_ie_result(copy.deepcopy(info), download=True)
                     return
@@ -972,51 +1214,55 @@ class App(tk.Tk):
                     log.warning("No se pudo reutilizar el análisis; se vuelve a extraer", exc_info=True)
             ydl.download([url])
 
-    def _download_worker(self, url, heights, want_audio, info):
-        out = self.out_dir.get()
-        kind = self._out_fmt
+    def _build_jobs(self, item):
+        """Convierte un ítem (URL + spec) en trabajos de yt-dlp: uno por resolución y uno de audio."""
+        spec, pl, out = item["spec"], item["is_playlist"], item["spec"]["out_dir"]
+        ext = final_ext(spec["kind"])
         base = {**self._ydl_base(), "progress_hooks": [self._hook], "ignoreerrors": False,
-                "noplaylist": not self.is_playlist, "continuedl": True}
-        vbase = {**base, "post_hooks": [self._ensure_compatible]}
-        jobs = []  # (etiqueta, opciones, extensión final)
-        for h in heights:
-            if self.is_playlist:
-                fmt = (f"bestvideo[height<={h}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
-                       f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best")
-                tmpl = "%(playlist_title)s/%(playlist_index)03d - %(title)s [" + str(h) + "p].%(ext)s"
-            else:
-                fmt = (f"bestvideo[height={h}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
-                       f"bestvideo[height={h}]+bestaudio/best[height={h}]")
-                tmpl = "%(title)s [" + str(h) + "p].%(ext)s"
-            jobs.append((f"{h}p", {**vbase, "format": fmt, "merge_output_format": "mp4",
-                                   "outtmpl": os.path.join(out, tmpl)}, final_ext(kind)))
-        if want_audio:
-            tmpl = ("%(playlist_title)s/%(playlist_index)03d - %(title)s.%(ext)s"
-                    if self.is_playlist else "%(title)s.%(ext)s")
-            jobs.append(("MP3", {**base, "format": "bestaudio/best", "outtmpl": os.path.join(out, tmpl),
-                                 "postprocessors": [{"key": "FFmpegExtractAudio",
-                                                     "preferredcodec": "mp3", "preferredquality": "320"}]}, ".mp3"))
+                "noplaylist": not pl, "continuedl": True}
+        jobs = []
+        for h in spec["heights"]:
+            opts = {**base, "post_hooks": [self._post_video], "format": build_format_selector(h, pl),
+                    "merge_output_format": "mp4", "outtmpl": os.path.join(out, video_template(h, pl))}
+            opts.update(video_extras(spec, ext))
+            jobs.append(Job(item, f"{h}p", opts, ext, spec))
+        if spec["audio"]:
+            codec, aext, has_q = AUDIO_FORMATS[spec["audio_fmt"]]
+            opts = {**base, "post_hooks": [self._post_audio], "format": "bestaudio/best",
+                    "outtmpl": os.path.join(out, audio_template(pl))}
+            opts.update(audio_extras(spec))
+            label = spec["audio_fmt"] + (f" {spec['audio_q']}" if has_q else "")
+            jobs.append(Job(item, label, opts, aext, spec))
+        return jobs
+
+    def _download_worker(self, items):
+        jobs = [j for it in items for j in self._build_jobs(it)]
         self.tracker = ProgressTracker(len(jobs))
         self.skipped = []
         failed = []
-        self._cleanup_orphans(out)
+        outs = sorted({it["spec"]["out_dir"] for it in items})
+        for o in outs:
+            self._cleanup_orphans(o)
+        url = items[0]["url"] if items else ""
         try:
-            for i, (label, opts, ext) in enumerate(jobs, 1):
+            for i, job in enumerate(jobs, 1):
                 if self.cancel:
                     raise yt_dlp.utils.DownloadCancelled("Cancelado por el usuario")
+                self.cur_spec = job.spec
+                label = job.label if len(items) == 1 else f"{short_title(job.item.get('title'))} · {job.label}"
                 self.tracker.start_job(i, label)
                 self.q.put(("progress", self.tracker.last, f"[{i}/{len(jobs)}] Iniciando {label}…"))
                 try:
-                    self._run_job(opts, url, info, ext)
+                    self._run_job(job.opts, job.item["url"], job.item["info"], job.item["analyzed_at"], job.ext)
                 except yt_dlp.utils.DownloadCancelled:
                     raise
                 except Exception as e:  # noqa: BLE001
                     if self.cancel:
                         raise yt_dlp.utils.DownloadCancelled("Cancelado por el usuario") from None
-                    log.exception("Falló el trabajo %s de %s", label, url)
-                    self.last_error = f"Trabajo {label} de {url}\n{traceback.format_exc()}"
+                    log.exception("Falló el trabajo %s de %s", label, job.item["url"])
+                    self.last_error = f"Trabajo {label} de {job.item['url']}\n{traceback.format_exc()}"
                     failed.append(f"{label}: {str(e)[:120]}")
-            msg = "✔ Descarga completada en: " + out
+            msg = "✔ Descarga completada en: " + ", ".join(outs)
             if self.skipped:
                 msg += "\nYa existían: " + ", ".join(self.skipped)
             if failed:
