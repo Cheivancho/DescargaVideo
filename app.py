@@ -68,6 +68,108 @@ RECODE_SPECS = {
     "mjpeg": ("Motion JPEG", ".mov", ["-c:v", "mjpeg", "-q:v", "2", "-pix_fmt", "yuvj422p"], _PCM, []),
 }
 
+H264_CPU = ("H.264 + AAC", ".mp4", ["-c:v", "libx264", "-crf", "17", "-preset", "medium", "-pix_fmt", "yuv420p"],
+            _AAC, ["-movflags", "+faststart"])
+INTRA_KINDS = ("prores", "prores_std", "dnxhr", "hap", "hapq")  # formatos de edición: la nota VP9/AV1 aplica a estos
+_HEVC_EXTRA = ["-movflags", "+faststart"]
+# kind -> [(encoder, argumentos de video)] por orden de preferencia. Solo se ofrecen si ffmpeg los lista Y una
+# codificación de prueba de 1 s con ESTOS MISMOS argumentos funciona.
+GPU_TABLE = {
+    "h264_gpu": [
+        ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "19", "-b:v", "0",
+                        "-pix_fmt", "yuv420p"]),
+        ("h264_qsv", ["-c:v", "h264_qsv", "-global_quality", "20", "-pix_fmt", "nv12"]),
+        ("h264_amf", ["-c:v", "h264_amf", "-rc", "cqp", "-qp_i", "20", "-qp_p", "20", "-quality", "quality",
+                      "-pix_fmt", "yuv420p"]),
+    ],
+    "h265_gpu": [
+        ("hevc_nvenc", ["-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "22", "-b:v", "0",
+                        "-pix_fmt", "yuv420p", "-tag:v", "hvc1"]),
+        ("hevc_qsv", ["-c:v", "hevc_qsv", "-global_quality", "23", "-pix_fmt", "nv12", "-tag:v", "hvc1"]),
+        ("hevc_amf", ["-c:v", "hevc_amf", "-rc", "cqp", "-qp_i", "23", "-qp_p", "23", "-quality", "quality",
+                      "-pix_fmt", "yuv420p", "-tag:v", "hvc1"]),
+    ],
+}
+GPU_FALLBACK = {"h264_gpu": "h264", "h265_gpu": "h265"}  # si la GPU falla se reintenta con CPU
+_GPU_VENDOR = {"nvenc": "NVIDIA NVENC", "qsv": "Intel QSV", "amf": "AMD AMF"}
+_GPU_LABEL = {"h264_gpu": "H.264 + AAC (GPU {v}, MP4 rápido)", "h265_gpu": "H.265 / HEVC + AAC (GPU {v}, MP4 rápido)"}
+
+
+def _ffmpeg_signature() -> str:
+    """Identifica el ffmpeg en uso (ruta, tamaño y fecha) para saber si el resultado cacheado sigue valiendo."""
+    p = shutil.which("ffmpeg")
+    try:
+        st = os.stat(p)
+        return f"{p}|{st.st_size}|{int(st.st_mtime)}"
+    except (OSError, TypeError):
+        return ""
+
+
+def ffmpeg_encoder_names() -> set[str]:
+    """Nombres de encoders de video que ffmpeg dice tener ('ffmpeg -encoders')."""
+    try:
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, timeout=20, text=True,
+                             encoding="utf-8", errors="replace",
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    return set(re.findall(r"^\s*V\S*\s+(\w+)", out, re.M))
+
+
+def probe_encoder(args: list[str]) -> bool:
+    """¿Funciona de verdad este encoder? Codifica 1 segundo de video negro a ninguna parte."""
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=640x360:r=25:d=1",
+           *args, "-f", "null", "-"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=30, text=True, encoding="utf-8", errors="replace",
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if r.returncode != 0:
+        log.info("Encoder de prueba no disponible (%s): %s", args[1], (r.stderr or "").strip()[-200:])
+    return r.returncode == 0
+
+
+def cached_gpu() -> dict:
+    """Resultado de la última detección si corresponde al ffmpeg actual; {} si no hay (no ejecuta nada)."""
+    st = updater.load_state().get("gpu")
+    if isinstance(st, dict) and st.get("sig") and st.get("sig") == _ffmpeg_signature():
+        return {k: st[k] for k in GPU_TABLE if isinstance(st.get(k), str)}
+    return {}
+
+
+def detect_gpu_encoders(force: bool = False) -> dict:
+    """{'h264_gpu': 'h264_nvenc', ...} solo con los encoders que pasan la prueba. Cachea el resultado."""
+    if not force:
+        st = updater.load_state().get("gpu")
+        if isinstance(st, dict) and st.get("sig") == _ffmpeg_signature() and all(k in st for k in GPU_TABLE):
+            return cached_gpu()
+    names = ffmpeg_encoder_names()
+    result = {}
+    for kind, options in GPU_TABLE.items():
+        enc = next((e for e, args in options if e in names and probe_encoder(args)), None)
+        if enc:
+            result[kind] = enc
+    updater.update_state(gpu={"sig": _ffmpeg_signature(), **{k: result.get(k) for k in GPU_TABLE}})
+    return result
+
+
+def register_gpu_formats(gpu: dict) -> list[str]:
+    """Añade a OUT_FORMATS/RECODE_SPECS las opciones por GPU detectadas. Devuelve las etiquetas nuevas."""
+    added = []
+    for kind, enc in gpu.items():
+        args = dict(GPU_TABLE.get(kind, [])).get(enc)
+        if not args:
+            continue
+        vendor = _GPU_VENDOR[enc.rsplit("_", 1)[1]]
+        label = _GPU_LABEL[kind].format(v=vendor)
+        RECODE_SPECS[kind] = (label.split(" (")[0] + f" ({vendor})", ".mp4", list(args), _AAC, list(_HEVC_EXTRA))
+        if kind not in OUT_FORMATS.values():
+            OUT_FORMATS[label] = kind
+            added.append(label)
+    return added
+
+
 PLAYLIST_HEIGHTS = [2160, 1440, 1080, 720, 480, 360, 240, 144]
 
 # Paleta
@@ -602,6 +704,7 @@ class App(tk.Tk):
         self.cur_spec = {}
         self.cancel = False
         self.thumb_img = None
+        register_gpu_formats(cached_gpu())  # opciones GPU ya comprobadas en un arranque anterior (sin ejecutar ffmpeg)
         self.settings = load_settings()
         self.last_error = ""
         self.out_dir = tk.StringVar(value=self.settings["out_dir"])
@@ -615,6 +718,7 @@ class App(tk.Tk):
         self.after(1200, lambda: threading.Thread(target=self._check_update_worker, daemon=True).start())
         # La consulta/descarga de yt-dlp va en segundo plano y DESPUÉS de mostrar la ventana
         self.after(2500, lambda: threading.Thread(target=self._engine_update_worker, daemon=True).start())
+        self.after(1500, lambda: threading.Thread(target=self._gpu_worker, daemon=True).start())
 
     def _restore_geometry(self) -> None:
         m = re.fullmatch(r"(\d+)x(\d+)", self.settings["geometry"])
@@ -802,6 +906,7 @@ class App(tk.Tk):
         self.help_menu.add_separator()
         self.help_menu.add_command(label="Buscar actualizaciones ahora", command=self._check_updates_now)
         self.help_menu.add_command(label="Restaurar motor incluido", command=self._reset_engine)
+        self.help_menu.add_command(label="Detectar la GPU de nuevo", command=self._redetect_gpu)
 
         # Barra de URL
         bar = tk.Frame(self, bg=BG)
@@ -870,8 +975,9 @@ class App(tk.Tk):
         self._label(tab_video, "FORMATO DE SALIDA", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
         self.fmt_var = tk.StringVar(value=next((k for k, v in OUT_FORMATS.items() if v == self.settings["fmt"]),
                                                next(iter(OUT_FORMATS))))
-        ttk.Combobox(tab_video, textvariable=self.fmt_var, values=list(OUT_FORMATS), state="readonly",
-                     font=(FONT, 10)).pack(fill="x", pady=(6, 0))
+        self.fmt_box = ttk.Combobox(tab_video, textvariable=self.fmt_var, values=list(OUT_FORMATS), state="readonly",
+                                    font=(FONT, 10))
+        self.fmt_box.pack(fill="x", pady=(6, 0))
         self._label(tab_video, "ProRes y HAP generan archivos muy pesados (varios GB por minuto en 4K).",
                     8, False, MUTED, PANEL, wraplength=self.px(380), justify="left").pack(anchor="w", pady=(4, 0))
 
@@ -1055,6 +1161,10 @@ class App(tk.Tk):
                 log.warning("Búsqueda manual de actualizaciones fallida", exc_info=True)
                 self.q.put(("msgbox", "Actualizaciones", f"No se pudo comprobar: {e}"))
         threading.Thread(target=work, daemon=True).start()
+
+    def _redetect_gpu(self) -> None:
+        self.status.set("Probando encoders de GPU…")
+        threading.Thread(target=self._gpu_worker, args=(True,), daemon=True).start()
 
     def _reset_engine(self) -> None:
         if messagebox.askyesno("Restaurar motor", "Se borrará el yt-dlp descargado y se volverá al incluido en la "
@@ -1445,35 +1555,9 @@ class App(tk.Tk):
             for t in thumbs:
                 self._remove_quietly(t)
 
-    def _convert(self, path, spec):
-        """Convierte el video descargado al formato de salida elegido.
-
-        H.264: solo recodifica lo necesario (video VP9/AV1 y/o audio Opus).
-        Resto de formatos: recodifica siempre y borra el MP4 intermedio.
-        Se puede cancelar: se detiene ffmpeg, se borra el archivo parcial y se conserva el MP4 original.
-        """
-        kind = spec["kind"]
-        vf = build_video_filter(spec)  # escala/recorte: fuerza recodificar el video
-        if kind == "original" or not path or not path.lower().endswith(".mp4") or not os.path.isfile(path):
-            return
-        if kind == "h264":
-            codecs = self._probe_codecs(path)
-            if codecs is None:
-                return
-            vcodec_src, acodec_src = codecs
-            v_ok = vcodec_src == "h264" and not vf
-            a_ok = (not acodec_src) or acodec_src == "aac"
-            if v_ok and a_ok:
-                return
-            label, ext = "H.264 + AAC", ".mp4"
-            vcodec = ["-c:v", "copy"] if v_ok else ["-c:v", "libx264", "-crf", "17", "-preset", "medium",
-                                                     "-pix_fmt", "yuv420p"]
-            acodec = ["-c:a", "copy"] if a_ok else _AAC
-            extra = ["-movflags", "+faststart"]
-        else:
-            label, ext, vcodec, acodec, extra = RECODE_SPECS[kind]
+    def _encode(self, path, spec, ext, vcodec, acodec, extra, vf):
+        """Un intento de conversión con ffmpeg. Devuelve la ruta del archivo nuevo o None si falló."""
         dest = path[:-4] + (".compat.mp4" if ext == ".mp4" else ext)
-        self.q.put(("status", f"Convirtiendo a {label} (puede tardar)…"))
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:v:0", "-map", "0:a?"]
         if vf:
             cmd += ["-vf", vf]
@@ -1481,7 +1565,47 @@ class App(tk.Tk):
             cmd += ["-map", "0:s?", "-c:s", "copy"]  # conserva los subtítulos incrustados
         cmd += vcodec + acodec + extra + [dest]
         ok, _ = self._run_ffmpeg(cmd, dest)
-        if not ok:
+        return dest if ok else None
+
+    def _convert(self, path, spec):
+        """Convierte el video descargado al formato de salida elegido.
+
+        H.264: solo recodifica lo necesario (video VP9/AV1 y/o audio Opus).
+        Resto de formatos: recodifica siempre y borra el MP4 intermedio.
+        GPU: si falla, se reintenta con CPU. Se puede cancelar: se detiene ffmpeg, se borra el archivo parcial
+        y se conserva el MP4 original.
+        """
+        kind = spec["kind"]
+        vf = build_video_filter(spec)  # escala/recorte: fuerza recodificar el video
+        if kind == "original" or not path or not path.lower().endswith(".mp4") or not os.path.isfile(path):
+            return
+        codecs = self._probe_codecs(path)
+        if codecs is None and kind == "h264":
+            return
+        src_v, src_a = codecs or (None, None)
+        if kind == "h264":
+            v_ok = src_v == "h264" and not vf
+            a_ok = (not src_a) or src_a == "aac"
+            if v_ok and a_ok:
+                return
+            label, ext = "H.264 + AAC", ".mp4"
+            vcodec = ["-c:v", "copy"] if v_ok else list(H264_CPU[2])
+            acodec = ["-c:a", "copy"] if a_ok else _AAC
+            extra = ["-movflags", "+faststart"]
+        else:
+            label, ext, vcodec, acodec, extra = RECODE_SPECS[kind]
+        note = ""
+        if kind in INTRA_KINDS and src_v in ("vp9", "av1"):
+            note = f"  El origen es {src_v.upper()}: la conversión mejora la compatibilidad, no la calidad."
+        self.q.put(("status", f"Convirtiendo a {label} (puede tardar)…{note}"))
+        dest = self._encode(path, spec, ext, vcodec, acodec, extra, vf)
+        if dest is None and kind in GPU_FALLBACK:
+            cpu = H264_CPU if GPU_FALLBACK[kind] == "h264" else RECODE_SPECS[GPU_FALLBACK[kind]]
+            log.warning("La conversión por GPU (%s) falló; se reintenta con CPU", label)
+            self.q.put(("status", f"La conversión por GPU falló; reintentando con CPU ({cpu[0]})…"))
+            label, ext, vcodec, acodec, extra = cpu
+            dest = self._encode(path, spec, ext, vcodec, acodec, extra, vf)
+        if dest is None:
             self.q.put(("status", f"No se pudo convertir a {label}; se conserva el MP4 original."))
             return
         if ext == ".mp4":
@@ -1608,6 +1732,22 @@ class App(tk.Tk):
         finally:
             self.tracker = None
 
+    # ---------- GPU ----------
+    def _gpu_worker(self, force=False):
+        try:
+            self.q.put(("gpu", detect_gpu_encoders(force), force))
+        except Exception:  # noqa: BLE001
+            log.warning("No se pudo detectar la GPU", exc_info=True)
+
+    def _apply_gpu(self, gpu, announce=False):
+        added = register_gpu_formats(gpu)
+        self.fmt_box.config(values=list(OUT_FORMATS))
+        if announce:
+            self.status.set("GPU detectada: " + ", ".join(gpu.values()) if gpu else
+                            "No se encontró ningún encoder de GPU que funcione.")
+        elif added:
+            log.info("Encoders GPU disponibles: %s", ", ".join(gpu.values()))
+
     # ---------- Motor yt-dlp en segundo plano ----------
     def _engine_update_worker(self):
         try:
@@ -1689,6 +1829,8 @@ class App(tk.Tk):
                     self.busy = False
                     self.btn_an.config(state="normal")
                     self._set_dl(self._url_matches())
+                elif kind == "gpu":
+                    self._apply_gpu(msg[1], msg[2])
                 elif kind == "engine":
                     self.engine_lbl.config(text="Motor actualizado (se aplica al reiniciar)")
                 elif kind == "app_update":
