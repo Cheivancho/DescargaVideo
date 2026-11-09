@@ -351,7 +351,7 @@ private fun UpdateDialog(vm: MainViewModel, info: UpdateInfo) {
                     )
                 }
                 Text(
-                    "Si Android muestra un aviso de Google Play Protect, toca «Más detalles» y luego «Instalar sin "
+                    "Si Android muestra un aviso de Google Play Protect, toca «Más detalles» y luego «Instalar sin " +
                         "analizar» (o «Analizar app»). Es la misma app que publicamos en GitHub.",
                     color = Muted, fontSize = 12.sp,
                 )
