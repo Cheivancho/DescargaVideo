@@ -578,6 +578,7 @@ class App(tk.Tk):
         if pend:
             text += f"\n(motor {pend} listo; se aplica al reiniciar)"
         text += f"\nMotor JavaScript: {', '.join(self.dl.js_runtimes) or 'ninguno'}"
+        text += f"\nDatos: {updater.DATA_DIR}" + ("  (modo portable)" if updater.IS_PORTABLE else "")
         messagebox.showinfo("Acerca de", text)
 
     def _check_updates_now(self) -> None:
@@ -1040,7 +1041,10 @@ class App(tk.Tk):
                 elif kind == "engine":
                     self.engine_lbl.config(text="Motor actualizado (se aplica al reiniciar)")
                 elif kind == "app_update":
-                    self._show_update_dialog(msg[1])
+                    if updater.IS_PORTABLE:  # el instalador no sirve para la versión portable
+                        self.engine_lbl.config(text=f"Nueva versión {msg[1]['version']}: descarga el .zip portable")
+                    else:
+                        self._show_update_dialog(msg[1])
                 elif kind == "upd_progress":
                     msg[1]["value"] = msg[2]
                 elif kind == "upd_run":

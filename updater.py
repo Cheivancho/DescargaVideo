@@ -21,10 +21,27 @@ import time
 import urllib.request
 import zipfile
 
-VERSION = "1.2.0"
+VERSION = "2.0.0"
 REPO = "Cheivancho/descargador-youtube"
 
-DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "DescargadorYouTube")
+PORTABLE_FLAG = "portable.flag"
+
+
+def app_dir() -> str:
+    """Carpeta del ejecutable (o del código fuente)."""
+    return os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
+
+
+def resolve_data_dir(base: str, localappdata: str | None) -> str:
+    """Carpeta de datos (estado, log, presets, motor yt-dlp). Con 'portable.flag' junto al ejecutable es la
+    carpeta 'data' de al lado (versión portable); si no, %LOCALAPPDATA%\\DescargadorYouTube."""
+    if os.path.isfile(os.path.join(base, PORTABLE_FLAG)):
+        return os.path.join(base, "data")
+    return os.path.join(localappdata or os.path.expanduser("~"), "DescargadorYouTube")
+
+
+IS_PORTABLE = os.path.isfile(os.path.join(app_dir(), PORTABLE_FLAG))
+DATA_DIR = resolve_data_dir(app_dir(), os.environ.get("LOCALAPPDATA"))
 YTDLP_DIR = os.path.join(DATA_DIR, "yt-dlp")
 YTDLP_NEXT = os.path.join(DATA_DIR, "yt-dlp.next")
 STATE_FILE = os.path.join(DATA_DIR, "state.json")

@@ -20,6 +20,11 @@ UninstallDisplayIcon={app}\DescargadorYouTube.exe
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+#ifdef Sign
+; Firma opcional: build.ps1 pasa /DSign=1 y /Ssigntool=<comando> solo si existe SIGN_COMMAND (docs\FIRMA.md)
+SignTool=signtool
+SignedUninstaller=yes
+#endif
 CloseApplications=yes
 RestartApplications=no
 ArchitecturesAllowed=x64compatible

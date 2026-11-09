@@ -39,7 +39,8 @@ def selftest(path: str) -> None:
         _f.writelines(line + "\n" for line in (
             f"app={updater.VERSION}", f"yt_dlp={yt_dlp.version.__version__}", f"file={yt_dlp.__file__}",
             f"extractor={_yt.__file__}", f"yt_dlp_ejs={_ejs}",
-            f"js_runtime={list(find_js_runtimes()) or 'NINGUNO'}", f"ffmpeg={shutil.which('ffmpeg')}"))
+            f"js_runtime={list(find_js_runtimes()) or 'NINGUNO'}", f"ffmpeg={shutil.which('ffmpeg')}",
+            f"portable={updater.IS_PORTABLE}", f"data_dir={updater.DATA_DIR}"))
 
 
 def main() -> None:

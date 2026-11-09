@@ -2,8 +2,9 @@
 ======================
 
 Programa para Windows que descarga videos de YouTube en todas las
-resoluciones disponibles (desde 144p hasta 4K u 8K), audio en MP3 y
-listas de reproducción completas.
+resoluciones disponibles (desde 144p hasta 4K u 8K), audio, subtítulos
+y listas de reproducción completas, con salida lista para edición y
+pantallas LED (ProRes, DNxHR, HAP).
 
 
 CÓMO INSTALARLO
@@ -15,25 +16,69 @@ CÓMO INSTALARLO
 3. Sigue los pasos (Siguiente -> Instalar). Se crea un acceso directo
    en el escritorio.
 
+VERSIÓN PORTABLE (sin instalar): descomprime
+"DescargadorYouTube-portable.zip" en cualquier carpeta (o un USB) y abre
+DescargadorYouTube.exe. Todos sus datos quedan en la carpeta "data"
+de al lado. No se actualiza sola: cuando haya una versión nueva la app
+te lo indicará arriba a la derecha y deberás descargar el .zip nuevo.
+
 
 CÓMO USARLO
 -----------
 1. Copia el enlace del video o de la lista de reproducción y pégalo
-   en la barra de arriba.
+   en la barra de arriba (si ya lo tienes copiado, la app lo pega sola).
 2. Pulsa "Analizar". A la derecha verás la vista previa del video.
-3. Marca las resoluciones que quieras (o "Todas") y, si lo deseas,
-   la casilla de audio MP3.
+   Si el enlace es de un video dentro de una lista, te preguntará si
+   quieres solo ese video o toda la lista.
+3. Marca las resoluciones que quieras (o "Todas").
 4. Elige el "Formato de salida": H.264 (por defecto), ProRes o DNxHR
    para Media Encoder y edición, HAP para Resolume, etc. Los formatos
-   ProRes, DNxHR y HAP generan archivos muy pesados.
+   ProRes, DNxHR y HAP generan archivos muy pesados. Si tu tarjeta
+   gráfica lo permite, verás también H.264/H.265 (GPU), mucho más rápidos.
 5. Pulsa "DESCARGAR". Los archivos se guardan por defecto en
-   Videos\YouTube (puedes cambiar la carpeta).
+   Videos\YouTube (puedes cambiar la carpeta). Al terminar, "Abrir
+   carpeta" la abre. Si ya existían, no se vuelven a bajar.
+
+Si cambias el enlace después de analizar, vuelve a pulsar "Analizar".
+
+
+OPCIONES (pestañas de la izquierda)
+-----------------------------------
+- Video: resoluciones, formato de salida y FPS máximos (30 o 60).
+- Escala/corte:
+    * Resolución exacta (1920x1080, 3840x2160, 1280x720 o AxB) con barras,
+      recortando o estirando. Con HAP las medidas se ajustan a múltiplos
+      de 4.
+    * Recortar tramo: Inicio y Fin en mm:ss o hh:mm:ss. "Corte exacto"
+      re-codifica. El nombre del archivo indica el tramo.
+- Extras: audio (MP3, M4A, Opus, WAV o FLAC), subtítulos (es,en por
+  defecto; incrustados en MP4 o guardados como .srt), miniatura y
+  metadatos, y cookies del navegador (Firefox suele ser lo más fiable;
+  Chrome y Edge recientes pueden fallar al leerlas).
+- Cola: "+ Cola" guarda el trabajo configurado para procesarlo junto con
+  otros; DESCARGAR procesa toda la cola.
+- Preset (arriba): guarda y recupera combinaciones de opciones. Trae
+  "Resolume 1080p (HAP)", "Premiere 1080p (ProRes 422)",
+  "Web ligero 720p (H.264)" y "Solo audio MP3 320".
+
+Durante la descarga puedes "Pausar" (conserva lo bajado) y "Reanudar", o
+"Cancelar" (también durante una conversión larga).
+
+
+AYUDA Y ERRORES
+---------------
+El menú "Ayuda" permite abrir el registro (log), ver las versiones,
+buscar actualizaciones ahora y restaurar el motor de descarga incluido.
+Si algo falla, pulsa "Copiar error" y pégalo al pedir ayuda.
 
 
 ACTUALIZACIONES
 ---------------
 El programa se actualiza solo. Cuando haya una versión nueva aparecerá
-una ventana al abrirlo: pulsa "Actualizar ahora" y listo.
+una ventana al abrirlo: pulsa "Actualizar ahora" y listo. Solo se instala
+si el instalador publicado trae su huella (SHA-256) y coincide.
+El motor de descarga (yt-dlp) se actualiza en segundo plano y se aplica
+al reiniciar el programa.
 Necesita conexión a internet para actualizarse.
 
 
@@ -43,6 +88,9 @@ Descargar contenido de YouTube puede incumplir sus términos de servicio
 y los derechos de autor. Úsalo solo con videos propios, con licencia
 libre o con permiso de su autor. El autor no se hace responsable del uso
 que se le dé al programa.
+
+Proyectos como este pueden recibir reclamos de retirada (takedown) y el
+sitio donde se publica podría desaparecer sin aviso.
 
 Más información y código fuente:
 https://github.com/Cheivancho/descargador-youtube

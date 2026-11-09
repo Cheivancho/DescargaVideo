@@ -224,3 +224,21 @@ def test_reset_engine_borra_todo(datos):
         (datos / d / "version.txt").write_text("1")
     updater.reset_ytdlp_engine()
     assert not (datos / "yt-dlp").exists() and not (datos / "yt-dlp.next").exists()
+
+
+# ---------------------------------------------------------------- versión portable
+def test_data_dir_normal_usa_localappdata(tmp_path):
+    base, local = tmp_path / "app", tmp_path / "local"
+    base.mkdir()
+    assert updater.resolve_data_dir(str(base), str(local)) == str(local / "DescargadorYouTube")
+    assert updater.resolve_data_dir(str(base), None).endswith("DescargadorYouTube")  # sin LOCALAPPDATA
+
+
+def test_data_dir_portable_con_flag(tmp_path):
+    (tmp_path / updater.PORTABLE_FLAG).write_text("")
+    assert updater.resolve_data_dir(str(tmp_path), str(tmp_path / "local")) == str(tmp_path / "data")
+
+
+def test_el_flag_debe_ser_un_archivo(tmp_path):
+    (tmp_path / updater.PORTABLE_FLAG).mkdir()  # una carpeta con ese nombre no activa el modo portable
+    assert updater.resolve_data_dir(str(tmp_path), str(tmp_path / "local")) != str(tmp_path / "data")

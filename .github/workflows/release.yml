@@ -21,6 +21,10 @@ env:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      # Firma OPCIONAL: solo se firma si existen estos secretos del repositorio (docs/FIRMA.md)
+      SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
+      SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -64,6 +68,19 @@ jobs:
           Expand-Archive "$env:RUNNER_TEMP\deno.zip" "$env:RUNNER_TEMP\deno"
           Copy-Item "$env:RUNNER_TEMP\deno\deno.exe" vendor\deno.exe
 
+      - name: Preparar la firma (opcional)
+        if: env.SIGN_PFX_BASE64 != ''
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "firma.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_PFX_BASE64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match "\\x64\\" } | Sort-Object FullName | Select-Object -Last 1
+          if (-not $signtool) { throw "No se encontró signtool.exe en el runner" }
+          # $f lo sustituye Inno Setup por el archivo a firmar
+          "SIGN_COMMAND=`"$($signtool.FullName)`" sign /fd sha256 /td sha256 /tr http://timestamp.digicert.com /f `"$pfx`" /p `"$env:SIGN_PFX_PASSWORD`" `$f" |
+            Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
       - name: Compilar
         shell: pwsh
         run: ./build.ps1
@@ -79,11 +96,18 @@ jobs:
           New-Item -ItemType Directory $stage | Out-Null
           Copy-Item $setup, Leeme.txt $stage
           Compress-Archive -Path "$stage\*" -DestinationPath output\DescargadorYouTube.zip
+          # Versión portable: dist\ + ffmpeg + deno + portable.flag (guarda sus datos en .\data)
+          $papp = Join-Path $env:RUNNER_TEMP "portable\DescargadorYouTube"
+          New-Item -ItemType Directory $papp -Force | Out-Null
+          Copy-Item "dist\DescargadorYouTube\*" $papp -Recurse
+          Copy-Item vendor\ffmpeg.exe, vendor\deno.exe, Leeme.txt $papp
+          New-Item -ItemType File (Join-Path $papp "portable.flag") | Out-Null
+          Compress-Archive -Path $papp -DestinationPath output\DescargadorYouTube-portable.zip
 
       - name: Crear la Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" output\DescargadorYouTube-Setup.exe output\DescargadorYouTube-Setup.exe.sha256 output\DescargadorYouTube.zip `
+          gh release create "${{ github.ref_name }}" output\DescargadorYouTube-Setup.exe output\DescargadorYouTube-Setup.exe.sha256 output\DescargadorYouTube.zip output\DescargadorYouTube-portable.zip `
             --title "Descargador de YouTube ${{ github.ref_name }}" --generate-notes

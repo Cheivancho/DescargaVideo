@@ -49,7 +49,14 @@ Write-Host "Compilando versión $version" -ForegroundColor Cyan
     --collect-all yt_dlp_ejs --copy-metadata yt-dlp-ejs app.py
 if ($LASTEXITCODE) { throw "PyInstaller falló" }
 
-& $iscc "/DAppVersion=$version" installer.iss
+# Firma digital OPCIONAL: solo si defines SIGN_COMMAND (ver docs\FIRMA.md). Sin ella se compila sin firmar.
+$isccArgs = @("/DAppVersion=$version")
+if ($env:SIGN_COMMAND) {
+    Write-Host "Firmando el instalador con SIGN_COMMAND" -ForegroundColor Cyan
+    $isccArgs += "/DSign=1"
+    $isccArgs += "/Ssigntool=$env:SIGN_COMMAND"
+}
+& $iscc @isccArgs installer.iss
 if ($LASTEXITCODE) { throw "Inno Setup falló" }
 
 Write-Host "Listo: output\DescargadorYouTube-Setup.exe" -ForegroundColor Green
