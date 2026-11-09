@@ -152,3 +152,26 @@ def test_find_js_runtimes_orden_de_preferencia(monkeypatch):
     assert list(find_js_runtimes()) == ["node"]
     hay.clear()
     assert find_js_runtimes() == {}
+
+
+# ---------------------------------------------------------------- MP4 intermedio sin convertir
+@pytest.mark.parametrize("kind, codecs, listo", [
+    ("h264", ("h264", "aac"), True),
+    ("h264", ("vp9", "opus"), False),  # conversión cancelada: queda el MP4 intermedio
+    ("h264", ("h264", "opus"), False),
+    ("h264_gpu", ("h264", None), True),
+    ("h265", ("h264", "aac"), False),
+    ("h265", ("hevc", "aac"), True),
+])
+def test_is_finished_distingue_el_mp4_intermedio(kind, codecs, listo):
+    d = downloader.Downloader(lambda m: None)
+    d.cur_spec = {"kind": kind}
+    d.converter.probe_codecs = lambda path: codecs
+    assert d.is_finished("x.mp4", ".mp4") is listo
+
+
+def test_is_finished_otros_formatos_no_inspeccionan():
+    d = downloader.Downloader(lambda m: None)
+    d.cur_spec = {"kind": "prores_std"}
+    d.converter.probe_codecs = lambda path: pytest.fail("no debe inspeccionar")
+    assert d.is_finished("x.mov", ".mov") is True

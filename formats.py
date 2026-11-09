@@ -60,6 +60,11 @@ _GPU_LABEL = {"h264_gpu": "H.264 + AAC (GPU {v}, MP4 rápido)", "h265_gpu": "H.2
 def register_gpu_formats(gpu: dict) -> list[str]:
     """Añade a OUT_FORMATS/RECODE_SPECS las opciones por GPU detectadas. Devuelve las etiquetas nuevas."""
     added = []
+    for kind in GPU_TABLE:  # quita las opciones que ya no funcionan
+        if kind not in gpu and kind in RECODE_SPECS:
+            del RECODE_SPECS[kind]
+            for lbl in [k for k, v in OUT_FORMATS.items() if v == kind]:
+                del OUT_FORMATS[lbl]
     for kind, enc in gpu.items():
         args = dict(GPU_TABLE.get(kind, [])).get(enc)
         if not args:

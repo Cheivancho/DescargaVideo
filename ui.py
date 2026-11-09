@@ -42,6 +42,7 @@ from formats import (
     AUDIO_QUALITIES,
     COOKIE_BROWSERS,
     FPS_CHOICES,
+    GPU_TABLE,
     OUT_FORMATS,
     PLAYLIST_HEIGHTS,
     SCALE_MODES,
@@ -111,6 +112,7 @@ class App(tk.Tk):
         self.thumb_img = None
         register_gpu_formats(cached_gpu())  # opciones GPU ya comprobadas en un arranque anterior (sin ejecutar ffmpeg)
         self.settings = load_settings()
+        self._saved_fmt, self._fmt_restored = self.settings["fmt"], False
         # copia para los hilos de descarga (no se leen variables tk fuera del hilo de la interfaz)
         self.dl.cookie_browser = self.settings["cookies"]
         self.out_dir = tk.StringVar(value=self.settings["out_dir"])
@@ -229,7 +231,8 @@ class App(tk.Tk):
         p = normalize_preset(raw)
         for k in PRESET_KEYS:
             if k == "fmt":
-                self.fmt_var.set(next(lbl for lbl, key in OUT_FORMATS.items() if key == p["fmt"]))
+                self.fmt_var.set(next((lbl for lbl, key in OUT_FORMATS.items() if key == p["fmt"]),
+                                      next(iter(OUT_FORMATS))))  # GPU no disponible: H.264
             else:
                 self.v[k].set(p[k])
         self.pending_heights = p["heights"]
@@ -664,6 +667,7 @@ class App(tk.Tk):
                         MUTED, PANEL, justify="left").pack(anchor="w")
             return
         sel = set(pick_heights(heights, self.pending_heights)) if self.pending_heights is not None else {heights[0]}
+        self.pending_heights = None  # un preset solo afecta al análisis siguiente
         for i, h in enumerate(heights):
             var = tk.BooleanVar(value=(h in sel))
             self.res_vars[h] = var
@@ -949,6 +953,13 @@ class App(tk.Tk):
     def _apply_gpu(self, gpu, announce=False):
         added = register_gpu_formats(gpu)
         self.fmt_box.config(values=list(OUT_FORMATS))
+        if OUT_FORMATS.get(self.fmt_var.get()) is None:  # la opción elegida (GPU) ya no existe
+            self.fmt_var.set(next(iter(OUT_FORMATS)))
+        elif self._saved_fmt in GPU_TABLE and not self._fmt_restored:  # ajuste guardado de GPU, ya detectada
+            lbl = next((k for k, v in OUT_FORMATS.items() if v == self._saved_fmt), None)
+            if lbl:
+                self.fmt_var.set(lbl)
+        self._fmt_restored = True
         if announce:
             self.status.set("GPU detectada: " + ", ".join(gpu.values()) if gpu else
                             "No se encontró ningún encoder de GPU que funcione.")
@@ -1076,8 +1087,9 @@ class App(tk.Tk):
                     self.btn_cancel.config(state="disabled")
                     self.btn_pause.config(state="disabled", text="Pausar")
                     self.dl.paused = False
-                    if self._running_queue and not self.dl.cancel:  # cola terminada (aunque algo fallara): se vacía
-                        self.queue_items.clear()
+                    if self._running_queue and not self.dl.cancel:  # cola terminada: quedan solo los que fallaron
+                        self.queue_items[:] = [it for it in self.queue_items
+                                               if any(it is f for f in self.dl.failed_items)]
                         self._refresh_queue()
                     self._running_queue = False
                     self._refresh_dl()
@@ -1085,4 +1097,10 @@ class App(tk.Tk):
                     self._show_result_buttons(msg[2], bool(self.dl.last_error))
         except queue.Empty:
             pass
+        except Exception:  # noqa: BLE001  un mensaje con error no debe detener para siempre la cola de eventos
+            log.exception("Error al procesar un evento de la interfaz")
+            self.busy = False
+            self.btn_an.config(state="normal")
+            self._refresh_dl()
+            self.status.set("Error interno (ver el log).")
         self.after(100, self._poll)

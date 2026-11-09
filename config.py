@@ -12,6 +12,7 @@ from formats import (
     AUDIO_QUALITIES,
     COOKIE_BROWSERS,
     FPS_CHOICES,
+    GPU_TABLE,
     OUT_FORMATS,
     SCALE_MODES,
     SCALE_PRESETS,
@@ -47,7 +48,7 @@ def load_settings(state: dict | None = None) -> dict:
         for k, default in DEFAULT_SETTINGS.items():
             if isinstance(raw.get(k), type(default)):
                 s[k] = raw[k]
-    if s["fmt"] not in OUT_FORMATS.values():
+    if s["fmt"] not in OUT_FORMATS.values() and s["fmt"] not in GPU_TABLE:  # GPU: aún sin detectar, no se pierde
         s["fmt"] = DEFAULT_SETTINGS["fmt"]
     if not re.fullmatch(r"\d{3,5}x\d{3,5}", s["geometry"]):
         s["geometry"] = ""

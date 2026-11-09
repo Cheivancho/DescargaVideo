@@ -67,6 +67,14 @@
   pasa a yt-dlp; `build.ps1`/`installer.iss` incluyen `vendor\deno.exe` si existe.
 - **DPI:** `SetProcessDpiAwareness` y tamaños de ventana/miniatura/`wraplength` escalados.
 
+### Corregido tras la revisión de código
+- Un MP4 sin convertir (conversión cancelada o fallida) ya no se da por terminado al repetir la descarga: se comprueba el códec.
+- La interfaz ya no se congela si un evento interno falla; el error va al log.
+- La cola conserva los elementos que fallaron para poder reintentarlos.
+- Un preset ya no impone sus resoluciones a todos los análisis posteriores.
+- La opción de GPU guardada se recupera cuando termina la detección; las opciones de GPU que dejan de funcionar se quitan.
+- El mensaje final indica "terminada con errores" si algún trabajo falló.
+
 ### Cambiado
 - **`app.py` dividido** sin cambios de comportamiento (extracción mecánica por AST y comprobación con descargas reales):
   `config.py` (rutas, `state.json`, presets, log), `formats.py` (formatos de salida, selector de yt-dlp, filtros de ffmpeg,

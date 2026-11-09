@@ -106,3 +106,16 @@ def test_los_presets_no_guardan_el_recorte():
 ])
 def test_pick_heights(disponibles, pedidas, esperado):
     assert pick_heights(disponibles, pedidas) == esperado
+
+
+def test_formato_gpu_guardado_no_se_pierde_sin_deteccion():
+    assert load_settings({"settings": {"fmt": "h264_gpu"}})["fmt"] == "h264_gpu"
+    assert load_settings({"settings": {"fmt": "inventado"}})["fmt"] == "h264"
+
+
+def test_register_gpu_formats_quita_los_que_ya_no_funcionan():
+    from formats import RECODE_SPECS, register_gpu_formats
+    register_gpu_formats({"h264_gpu": "h264_nvenc"})
+    assert "h264_gpu" in OUT_FORMATS.values() and "h264_gpu" in RECODE_SPECS
+    register_gpu_formats({})
+    assert "h264_gpu" not in OUT_FORMATS.values() and "h264_gpu" not in RECODE_SPECS

@@ -204,6 +204,7 @@ class Downloader:
         self.paused = False
         self.tracker = None
         self.skipped = []
+        self.failed_items = []  # ítems con algún trabajo fallido (la cola los conserva para reintentar)
         self.cur_spec = {}
         self.last_error = ""
         self.converter = Converter(lambda: self.cancel, emit)
@@ -223,6 +224,19 @@ class Downloader:
             pct, text = self.tracker.update(d)
             self.emit(("progress", pct, text))
 
+    def is_finished(self, path: str, ext: str) -> bool:
+        """¿El archivo ya está en su formato final? En MP4 el intermedio tiene el mismo nombre que el resultado,
+        así que se comprueba el códec: un MP4 sin convertir (conversión cancelada o fallida) no cuenta."""
+        kind = self.cur_spec.get("kind")
+        if ext != ".mp4" or kind not in ("h264", "h264_gpu", "h265", "h265_gpu"):
+            return True
+        codecs = self.converter.probe_codecs(path)
+        if codecs is None:
+            return True  # no se pudo inspeccionar: se conserva el comportamiento de saltar
+        vid, aud = codecs
+        want = "hevc" if kind.startswith("h265") else "h264"
+        return vid == want and (not aud or aud == "aac")
+
     def make_skip_filter(self, holder: dict, ext: str) -> Callable:
         """match_filter de yt-dlp: salta lo que ya existe con su nombre final (extensión tras convertir)."""
         def match(info_dict, *, incomplete=False):
@@ -232,7 +246,7 @@ class Downloader:
                 final = os.path.splitext(holder["ydl"].prepare_filename(info_dict))[0] + ext
             except Exception:  # noqa: BLE001
                 return None
-            if os.path.isfile(final):
+            if os.path.isfile(final) and self.is_finished(final, ext):
                 name = os.path.basename(final)
                 self.skipped.append(name)
                 self.emit(("status", f"Ya existía: {name}"))
@@ -295,6 +309,7 @@ class Downloader:
         jobs = [j for it in items for j in self.build_jobs(it)]
         self.tracker = ProgressTracker(len(jobs))
         self.skipped = []
+        self.failed_items = []
         failed = []
         outs = sorted({it["spec"]["out_dir"] for it in items})
         for o in outs:
@@ -321,7 +336,10 @@ class Downloader:
                     log.exception("Falló el trabajo %s de %s", label, job.item["url"])
                     self.last_error = f"Trabajo {label} de {job.item['url']}\n{traceback.format_exc()}"
                     failed.append(f"{label}: {friendly_error(str(e), self.cookie_browser)[:200]}")
-            msg = "✔ Descarga completada en: " + ", ".join(outs)
+                    if not any(job.item is f for f in self.failed_items):
+                        self.failed_items.append(job.item)
+            head = "⚠ Descarga terminada con errores en: " if failed else "✔ Descarga completada en: "
+            msg = head + ", ".join(outs)
             if self.skipped:
                 msg += "\nYa existían: " + ", ".join(self.skipped)
             if failed:
