@@ -292,8 +292,9 @@ def video_template(height: int, is_playlist: bool, tag: str = "") -> str:
     return "%(playlist_title)s/%(playlist_index)03d - " + name if is_playlist else name
 
 
-def audio_template(is_playlist: bool) -> str:
-    return "%(playlist_title)s/%(playlist_index)03d - %(title)s.%(ext)s" if is_playlist else "%(title)s.%(ext)s"
+def audio_template(is_playlist: bool, tag: str = "") -> str:
+    name = f"%(title)s{tag}.%(ext)s"
+    return "%(playlist_title)s/%(playlist_index)03d - " + name if is_playlist else name
 
 
 _THUMB_CONV = {"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"}
@@ -337,11 +338,122 @@ def audio_extras(spec: dict) -> dict:
     return opts
 
 
+SCALE_PRESETS = ["Sin cambios", "1920x1080", "3840x2160", "1280x720", "Personalizada"]
+SCALE_MODES = {"Ajustar con barras": "fit", "Rellenar recortando": "fill", "Estirar": "stretch"}
+FPS_CHOICES = ["Máximo", "30", "60"]
+
+
+def parse_time(text: str | None) -> float | None:
+    """'' -> None; 'mm:ss' o 'hh:mm:ss' (segundos con decimales opcionales) -> segundos. ValueError si es inválido."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    parts = t.split(":")
+    ok = 2 <= len(parts) <= 3 and all(re.fullmatch(r"\d{1,3}", p) for p in parts[:-1]) \
+        and re.fullmatch(r"\d{1,2}(?:\.\d+)?", parts[-1])
+    if not ok:
+        raise ValueError(f"Tiempo no válido: «{t}». Usa mm:ss u hh:mm:ss (p. ej. 1:30 o 0:01:30).")
+    nums = [float(p) for p in parts]
+    if nums[-1] >= 60 or (len(parts) == 3 and nums[1] >= 60):
+        raise ValueError(f"Tiempo no válido: «{t}». Minutos y segundos deben ser menores que 60.")
+    h = nums[0] if len(parts) == 3 else 0.0
+    return h * 3600 + nums[-2] * 60 + nums[-1]
+
+
+def validate_trim(start_text: str, end_text: str, duration: float | None = None, exact: bool = False) -> dict | None:
+    """Tramo a descargar: None si Inicio y Fin están vacíos; ValueError si no son coherentes."""
+    start, end = parse_time(start_text), parse_time(end_text)
+    if start is None and end is None:
+        return None
+    if end is not None and end <= (start or 0):
+        raise ValueError("El Fin del tramo debe ser posterior al Inicio.")
+    if duration and start is not None and start >= duration:
+        raise ValueError("El Inicio del tramo está después del final del video.")
+    return {"start": start, "end": end, "exact": bool(exact)}
+
+
+def _tstr(sec: float | None, default: str) -> str:
+    if sec is None:
+        return default
+    s = int(sec)
+    h, r = divmod(s, 3600)
+    m, s = divmod(r, 60)
+    return f"{h}h{m:02d}m{s:02d}s" if h else f"{m:02d}m{s:02d}s"
+
+
+def range_tag(trim: dict | None) -> str:
+    """Etiqueta para el nombre del archivo: ' [00m10s-00m20s]' (vacía si no hay tramo)."""
+    if not trim:
+        return ""
+    return f" [{_tstr(trim['start'] or 0, '00m00s')}-{_tstr(trim['end'], 'fin')}]"
+
+
+def variant_tag(spec: dict) -> str:
+    """Sufijo del nombre de archivo que distingue variantes del mismo video: tramo, escala y FPS."""
+    tag = range_tag(spec.get("trim"))
+    sc = spec.get("scale")
+    if sc:
+        tag += f" [{sc['w']}x{sc['h']}" + {"fill": " recorte", "stretch": " estirado"}.get(sc["mode"], "") + "]"
+    if spec.get("fps"):
+        tag += f" [{spec['fps']}fps]"
+    return tag
+
+
+def trim_options(trim: dict | None) -> dict:
+    """Opciones de yt-dlp para descargar solo un tramo (corte exacto = re-codifica en los cortes)."""
+    if not trim:
+        return {}
+    ranges = [(trim["start"] or 0, trim["end"] or float("inf"))]
+    return {"download_ranges": yt_dlp.utils.download_range_func(None, ranges),
+            "force_keyframes_at_cuts": bool(trim["exact"])}
+
+
+def parse_resolution(text: str) -> tuple[int, int]:
+    m = re.fullmatch(r"\s*(\d{2,5})\s*[xX×]\s*(\d{2,5})\s*", text or "")
+    if not m or not all(16 <= int(g) <= 8192 for g in m.groups()):
+        raise ValueError(f"Resolución no válida: «{text}». Usa AxB, p. ej. 1920x1080 (16 a 8192).")
+    return int(m[1]), int(m[2])
+
+
+def resolve_scale(preset: str, custom: str, mode_label: str, kind: str) -> tuple[dict | None, list[str]]:
+    """Resolución de salida elegida -> ({'w','h','mode'} | None, avisos). HAP exige múltiplos de 4; el resto, pares."""
+    if preset == "Sin cambios":
+        return None, []
+    w, h = parse_resolution(custom if preset == "Personalizada" else preset)
+    step = 4 if kind in ("hap", "hapq") else 2
+    w2, h2 = -(-w // step) * step, -(-h // step) * step
+    notes = []
+    if (w2, h2) != (w, h):
+        notes.append(f"Resolución ajustada a {w2}x{h2} (múltiplo de {step}" + (" para HAP)." if step == 4 else ")."))
+    return {"w": w2, "h": h2, "mode": SCALE_MODES.get(mode_label, "fit")}, notes
+
+
+def scale_filter(w: int, h: int, mode: str) -> str:
+    """Filtro de ffmpeg para llevar el video a w×h: 'fit' (barras), 'fill' (recorta) o 'stretch' (estira)."""
+    if mode == "fill":
+        return f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,crop={w}:{h},setsar=1"
+    if mode == "stretch":
+        return f"scale={w}:{h}:flags=lanczos,setsar=1"
+    return (f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1")
+
+
+def build_video_filter(spec: dict) -> str:
+    """Cadena -vf de ffmpeg para el trabajo ('' si no hace falta). HAP sin escala recorta a múltiplos de 4."""
+    sc = spec.get("scale")
+    if sc:
+        return scale_filter(sc["w"], sc["h"], sc["mode"])
+    if spec.get("kind") in ("hap", "hapq"):
+        return "crop=trunc(iw/4)*4:trunc(ih/4)*4"
+    return ""
+
+
 DEFAULT_SETTINGS = {
     "out_dir": os.path.join(os.path.expanduser("~"), "Videos", "YouTube"),
     "fmt": "h264", "audio": False, "preset": "", "geometry": "",
     "audio_fmt": "MP3", "audio_q": "320", "subs": False, "subs_langs": "es,en", "subs_mode": SUBS_MODES[0],
-    "embed": False,
+    "embed": False, "fps": FPS_CHOICES[0], "scale_preset": SCALE_PRESETS[0], "scale_custom": "1920x1080",
+    "scale_mode": next(iter(SCALE_MODES)),
 }
 _YT_LINK = re.compile(r"^https?://(?:(?:www|m|music)\.)?(?:youtube\.com|youtu\.be)/\S+$", re.I)
 
@@ -364,6 +476,12 @@ def load_settings(state: dict | None = None) -> dict:
         s["audio_q"] = "320"
     if s["subs_mode"] not in SUBS_MODES:
         s["subs_mode"] = SUBS_MODES[0]
+    if s["fps"] not in FPS_CHOICES:
+        s["fps"] = FPS_CHOICES[0]
+    if s["scale_preset"] not in SCALE_PRESETS:
+        s["scale_preset"] = SCALE_PRESETS[0]
+    if s["scale_mode"] not in SCALE_MODES:
+        s["scale_mode"] = next(iter(SCALE_MODES))
     return s
 
 
@@ -416,6 +534,7 @@ class App(tk.Tk):
         self.analyzed_url = None  # URL realmente analizada: la descarga usa esta, no el campo de texto
         self.analyzed_info = None  # info de un video individual, reutilizable mientras no caduque
         self.analyzed_at = 0.0
+        self.analyzed_duration = None
         self.playlist_choice = None  # "video" | "list" | None (el enlace no era ambiguo)
         self.tracker = None
         self.skipped = []
@@ -448,7 +567,7 @@ class App(tk.Tk):
         self.geometry(f"{w}x{h}")
 
     def _save_settings(self) -> None:
-        self.settings.update({k: var.get() for k, var in self.v.items()})
+        self.settings.update({k: var.get() for k, var in self.v.items() if k in DEFAULT_SETTINGS})
         self.settings.update(out_dir=self.out_dir.get(), fmt=OUT_FORMATS.get(self.fmt_var.get(), "h264"),
                              geometry=f"{self.winfo_width()}x{self.winfo_height()}")
         updater.update_state(settings=self.settings)
@@ -524,6 +643,10 @@ class App(tk.Tk):
                               activeforeground=CORAL_SOFT, selectcolor=FIELD, font=(FONT, 10), bd=0,
                               highlightthickness=0, cursor="hand2", **kw)
 
+    def _sync_scale(self):
+        custom = self.v["scale_preset"].get() == "Personalizada"
+        self.scale_custom_entry.config(state="normal" if custom else "disabled")
+
     def _sync_audio_quality(self):
         has_q = AUDIO_FORMATS.get(self.v["audio_fmt"].get(), ("", "", False))[2]
         self.audio_q_box.config(state="readonly" if has_q else "disabled")
@@ -586,6 +709,7 @@ class App(tk.Tk):
         self.tabs = ttk.Notebook(inner, style="Dark.TNotebook")
         self.tabs.pack(fill="both", expand=True)
         tab_video = self._tab("Video")
+        tab_scale = self._tab("Escala y corte")
         tab_extra = self._tab("Extras")
 
         # --- Pestaña Video ---
@@ -617,9 +741,54 @@ class App(tk.Tk):
             "audio": tk.BooleanVar(value=s["audio"]), "audio_fmt": tk.StringVar(value=s["audio_fmt"]),
             "audio_q": tk.StringVar(value=s["audio_q"]), "subs": tk.BooleanVar(value=s["subs"]),
             "subs_langs": tk.StringVar(value=s["subs_langs"]), "subs_mode": tk.StringVar(value=s["subs_mode"]),
-            "embed": tk.BooleanVar(value=s["embed"]),
+            "embed": tk.BooleanVar(value=s["embed"]), "fps": tk.StringVar(value=s["fps"]),
+            "scale_preset": tk.StringVar(value=s["scale_preset"]),
+            "scale_custom": tk.StringVar(value=s["scale_custom"]),
+            "scale_mode": tk.StringVar(value=s["scale_mode"]), "trim_start": tk.StringVar(),
+            "trim_end": tk.StringVar(), "trim_exact": tk.BooleanVar(value=False),
         }
         self.audio_var = self.v["audio"]
+
+        # --- Video: FPS ---
+        tk.Frame(tab_video, bg=CORAL_DIM, height=1).pack(fill="x", pady=12)
+        frow = tk.Frame(tab_video, bg=PANEL)
+        frow.pack(fill="x")
+        self._label(frow, "FPS MÁXIMOS", 9, True, CORAL_SOFT, PANEL).pack(side="left")
+        ttk.Combobox(frow, textvariable=self.v["fps"], values=FPS_CHOICES, state="readonly", width=9,
+                     font=(FONT, 10)).pack(side="left", padx=10)
+        self._label(tab_video, "Limita los cuadros por segundo (se elige un formato de 30 o 60 si existe).",
+                    8, False, MUTED, PANEL, wraplength=self.px(380), justify="left").pack(anchor="w", pady=(4, 0))
+
+        # --- Escala y corte ---
+        self._label(tab_scale, "RESOLUCIÓN EXACTA DE SALIDA", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
+        r1 = tk.Frame(tab_scale, bg=PANEL)
+        r1.pack(fill="x", pady=(6, 4))
+        ttk.Combobox(r1, textvariable=self.v["scale_preset"], values=SCALE_PRESETS, state="readonly", width=14,
+                     font=(FONT, 10)).pack(side="left")
+        self.scale_custom_entry = ttk.Entry(r1, textvariable=self.v["scale_custom"], width=11)
+        self.scale_custom_entry.pack(side="left", padx=8)
+        r2 = tk.Frame(tab_scale, bg=PANEL)
+        r2.pack(fill="x", pady=(0, 4))
+        self._label(r2, "Modo", 9, False, MUTED, PANEL).pack(side="left")
+        ttk.Combobox(r2, textvariable=self.v["scale_mode"], values=list(SCALE_MODES), state="readonly", width=20,
+                     font=(FONT, 10)).pack(side="left", padx=8)
+        self.v["scale_preset"].trace_add("write", lambda *_: self._sync_scale())
+        self._sync_scale()
+        self._label(tab_scale, "Re-codifica el video (con «Original» se usa H.264). HAP exige múltiplos de 4: "
+                    "se ajusta solo.", 8, False, MUTED, PANEL, wraplength=self.px(380), justify="left").pack(anchor="w")
+
+        tk.Frame(tab_scale, bg=CORAL_DIM, height=1).pack(fill="x", pady=12)
+        self._label(tab_scale, "RECORTAR TRAMO", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
+        t1 = tk.Frame(tab_scale, bg=PANEL)
+        t1.pack(fill="x", pady=(6, 4))
+        self._label(t1, "Inicio", 9, False, MUTED, PANEL).pack(side="left")
+        ttk.Entry(t1, textvariable=self.v["trim_start"], width=9).pack(side="left", padx=(6, 14))
+        self._label(t1, "Fin", 9, False, MUTED, PANEL).pack(side="left")
+        ttk.Entry(t1, textvariable=self.v["trim_end"], width=9).pack(side="left", padx=6)
+        self._check(tab_scale, "Corte exacto (re-codifica)", self.v["trim_exact"]).pack(anchor="w", pady=(2, 0))
+        self._label(tab_scale, "Formato mm:ss u hh:mm:ss. Vacío = sin recorte (Fin vacío = hasta el final). "
+                    "El nombre del archivo indica el tramo.", 8, False, MUTED, PANEL, wraplength=self.px(380),
+                    justify="left").pack(anchor="w")
 
         self._label(tab_extra, "AUDIO", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
         self._check(tab_extra, "Descargar también solo audio", self.v["audio"]).pack(anchor="w", pady=(6, 2))
@@ -929,6 +1098,7 @@ class App(tk.Tk):
         self.playlist_choice = choice
         self.analyzed_info = None if is_pl else info
         self.analyzed_at = time.time()
+        self.analyzed_duration = None if is_pl else info.get("duration")
         title = info.get("title") or "Sin título"
         self.title_lbl.config(text=title if len(title) <= 80 else title[:79].rstrip() + "…")
         if is_pl:
@@ -972,9 +1142,17 @@ class App(tk.Tk):
     def _collect_spec(self) -> dict:
         """Lee la interfaz y devuelve las opciones del trabajo (un dict simple, apto para la cola y los presets)."""
         v = {k: var.get() for k, var in self.v.items()}
+        kind = OUT_FORMATS[self.fmt_var.get()]
+        scale, notes = resolve_scale(v["scale_preset"], v["scale_custom"], v["scale_mode"], kind)
+        if scale and kind == "original":
+            kind = "h264"
+            notes.append("Con escala, el formato «Original» se convierte a H.264.")
+        trim = validate_trim(v["trim_start"], v["trim_end"], self.analyzed_duration, v["trim_exact"])
         return {
+            "scale": scale, "trim": trim, "notes": notes,
+            "fps": int(v["fps"]) if str(v["fps"]).isdigit() else None,
             "out_dir": self.out_dir.get(),
-            "kind": OUT_FORMATS[self.fmt_var.get()],
+            "kind": kind,
             "heights": [h for h, var in self.res_vars.items() if var.get()],
             "audio": bool(v["audio"]), "audio_fmt": v["audio_fmt"], "audio_q": v["audio_q"],
             "subs": bool(v["subs"]), "subs_langs": parse_langs(v["subs_langs"]),
@@ -989,7 +1167,11 @@ class App(tk.Tk):
             self.status.set("La URL cambió. Vuelve a pulsar Analizar.")
             self._set_dl(False)
             return
-        spec = self._collect_spec()
+        try:
+            spec = self._collect_spec()
+        except ValueError as e:
+            messagebox.showwarning("Revisa las opciones", str(e))
+            return
         if not spec["heights"] and not spec["audio"]:
             messagebox.showwarning("Nada seleccionado", "Marca al menos una resolución o el audio.")
             return
@@ -1130,6 +1312,7 @@ class App(tk.Tk):
         Se puede cancelar: se detiene ffmpeg, se borra el archivo parcial y se conserva el MP4 original.
         """
         kind = spec["kind"]
+        vf = build_video_filter(spec)  # escala/recorte: fuerza recodificar el video
         if kind == "original" or not path or not path.lower().endswith(".mp4") or not os.path.isfile(path):
             return
         if kind == "h264":
@@ -1137,7 +1320,7 @@ class App(tk.Tk):
             if codecs is None:
                 return
             vcodec_src, acodec_src = codecs
-            v_ok = vcodec_src == "h264"
+            v_ok = vcodec_src == "h264" and not vf
             a_ok = (not acodec_src) or acodec_src == "aac"
             if v_ok and a_ok:
                 return
@@ -1151,6 +1334,8 @@ class App(tk.Tk):
         dest = path[:-4] + (".compat.mp4" if ext == ".mp4" else ext)
         self.q.put(("status", f"Convirtiendo a {label} (puede tardar)…"))
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:v:0", "-map", "0:a?"]
+        if vf:
+            cmd += ["-vf", vf]
         if ext == ".mp4" and spec.get("subs") and spec.get("subs_mode") == "embed":
             cmd += ["-map", "0:s?", "-c:s", "copy"]  # conserva los subtítulos incrustados
         cmd += vcodec + acodec + extra + [dest]
@@ -1221,15 +1406,18 @@ class App(tk.Tk):
         base = {**self._ydl_base(), "progress_hooks": [self._hook], "ignoreerrors": False,
                 "noplaylist": not pl, "continuedl": True}
         jobs = []
+        tag, trim = variant_tag(spec), trim_options(spec.get("trim"))
         for h in spec["heights"]:
-            opts = {**base, "post_hooks": [self._post_video], "format": build_format_selector(h, pl),
-                    "merge_output_format": "mp4", "outtmpl": os.path.join(out, video_template(h, pl))}
+            opts = {**base, "post_hooks": [self._post_video], "format": build_format_selector(h, pl, spec.get("fps")),
+                    "merge_output_format": "mp4", "outtmpl": os.path.join(out, video_template(h, pl, tag))}
+            opts.update(trim)
             opts.update(video_extras(spec, ext))
             jobs.append(Job(item, f"{h}p", opts, ext, spec))
         if spec["audio"]:
             codec, aext, has_q = AUDIO_FORMATS[spec["audio_fmt"]]
             opts = {**base, "post_hooks": [self._post_audio], "format": "bestaudio/best",
-                    "outtmpl": os.path.join(out, audio_template(pl))}
+                    "outtmpl": os.path.join(out, audio_template(pl, tag))}
+            opts.update(trim)
             opts.update(audio_extras(spec))
             label = spec["audio_fmt"] + (f" {spec['audio_q']}" if has_q else "")
             jobs.append(Job(item, label, opts, aext, spec))
@@ -1251,7 +1439,9 @@ class App(tk.Tk):
                 self.cur_spec = job.spec
                 label = job.label if len(items) == 1 else f"{short_title(job.item.get('title'))} · {job.label}"
                 self.tracker.start_job(i, label)
-                self.q.put(("progress", self.tracker.last, f"[{i}/{len(jobs)}] Iniciando {label}…"))
+                note = " ".join(job.spec.get("notes") or []) if i == 1 else ""
+                self.q.put(("progress", self.tracker.last,
+                            f"[{i}/{len(jobs)}] Iniciando {label}…" + (f"  ({note})" if note else "")))
                 try:
                     self._run_job(job.opts, job.item["url"], job.item["info"], job.item["analyzed_at"], job.ext)
                 except yt_dlp.utils.DownloadCancelled:
