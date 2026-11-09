@@ -81,6 +81,11 @@
 - Si se corta la descarga de una actualización de la app, se borra la carpeta temporal parcial.
 - Al decidir si hay un yt-dlp más nuevo se compara con la versión más alta entre incluida, instalada y pendiente.
 
+### Cambiado (diseño)
+- Interfaz unificada: nueva paleta oscura con texto claro y coral solo como acento, bordes y campos coherentes, botones con efecto al pasar el ratón.
+- Pestañas nuevas (Video, Escala/corte, Extras, Cola) del mismo ancho con subrayado coral en la activa.
+- Ventana algo más alta y textos de ayuda más legibles.
+
 ### Cambiado
 - **`app.py` dividido** sin cambios de comportamiento (extracción mecánica por AST y comprobación con descargas reales):
   `config.py` (rutas, `state.json`, presets, log), `formats.py` (formatos de salida, selector de yt-dlp, filtros de ffmpeg,

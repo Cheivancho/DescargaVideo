@@ -59,13 +59,17 @@ log = logging.getLogger("descargador")
 
 
 # Paleta
-BG = "#121216"
-PANEL = "#1b1b22"
-FIELD = "#24242d"
-CORAL = "#F22E62"
-CORAL_DIM = "#a51f43"
-CORAL_SOFT = "#f77a99"
-MUTED = "#a0607a"
+BG = "#0e0e13"        # fondo de la ventana
+PANEL = "#16161d"     # tarjetas
+FIELD = "#1f1f29"     # campos y botones secundarios
+BORDER = "#2d2d3a"    # bordes y separadores
+HOVER = "#2a2a37"     # botón secundario al pasar el ratón
+CORAL = "#F22E62"     # acento (marca, botón principal, selección)
+CORAL_DIM = "#8f2142"  # selección tenue
+CORAL_SOFT = "#ff7a9b"  # títulos de sección
+TEXT = "#ececf2"      # texto principal
+MUTED = "#8b8b9e"     # texto secundario y ayudas
+DISABLED = "#555566"
 FONT = "Segoe UI"
 THUMB_W, THUMB_H = 320, 180  # en píxeles a 96 DPI; se escalan con el DPI de la pantalla
 
@@ -83,14 +87,68 @@ def enable_dpi_awareness() -> None:
             pass
 
 
+class TabBar(tk.Frame):
+    """Pestañas planas del mismo ancho: la activa lleva texto claro y un subrayado coral."""
+
+    def __init__(self, parent: tk.Misc) -> None:
+        super().__init__(parent, bg=PANEL)
+        self.bar = tk.Frame(self, bg=PANEL)
+        self.bar.pack(fill="x")
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x")  # línea base bajo las pestañas
+        self.body = tk.Frame(self, bg=PANEL)
+        self.body.pack(fill="both", expand=True)
+        self.items: dict[str, tuple[tk.Label, tk.Frame, tk.Frame]] = {}
+        self.current: str | None = None
+
+    def add(self, name: str) -> tk.Frame:
+        col = len(self.items)
+        self.bar.columnconfigure(col, weight=1, uniform="tab")
+        cell = tk.Frame(self.bar, bg=PANEL)
+        cell.grid(row=0, column=col, sticky="ew")
+        lbl = tk.Label(cell, text=name, bg=PANEL, fg=MUTED, font=(FONT, 10, "bold"), cursor="hand2", pady=9)
+        lbl.pack(fill="x")
+        underline = tk.Frame(cell, bg=PANEL, height=3)
+        underline.pack(fill="x")
+        frame = tk.Frame(self.body, bg=PANEL)
+        self.items[name] = (lbl, underline, frame)
+        for w in (cell, lbl):
+            w.bind("<Button-1>", lambda e, n=name: self.select(n))
+            w.bind("<Enter>", lambda e, n=name: self._hover(n, True))
+            w.bind("<Leave>", lambda e, n=name: self._hover(n, False))
+        inner = tk.Frame(frame, bg=PANEL)
+        inner.pack(fill="both", expand=True, padx=2, pady=(12, 4))
+        frame.inner = inner  # type: ignore[attr-defined]
+        if self.current is None:
+            self.select(name)
+        return inner
+
+    def _hover(self, name: str, on: bool) -> None:
+        if name != self.current:
+            self.items[name][0].config(fg=TEXT if on else MUTED)
+
+    def tabs(self) -> list[str]:
+        return list(self.items)
+
+    def select(self, name: str) -> None:
+        for n, (lbl, underline, frame) in self.items.items():
+            active = n == name
+            lbl.config(fg=TEXT if active else MUTED)
+            underline.config(bg=CORAL if active else PANEL)
+            if active:
+                frame.pack(fill="both", expand=True)
+            else:
+                frame.pack_forget()
+        self.current = name
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.ui = max(self.winfo_fpixels("1i") / 96, 1.0)  # factor de escala por DPI
         self.thumb_w, self.thumb_h = self.px(THUMB_W), self.px(THUMB_H)
         self.title("Descargador de YouTube")
-        self.geometry(f"{self.px(1060)}x{self.px(740)}")
-        self.minsize(self.px(1000), self.px(700))
+        self.geometry(f"{self.px(1060)}x{self.px(790)}")
+        self.minsize(self.px(1000), self.px(760))
         self.configure(bg=BG)
         try:
             self.iconbitmap(os.path.join(RES_DIR, "icon.ico"))
@@ -174,44 +232,43 @@ class App(tk.Tk):
     def _styles(self):
         s = ttk.Style(self)
         s.theme_use("clam")
-        s.configure("TEntry", fieldbackground=FIELD, foreground=CORAL, insertcolor=CORAL,
-                    bordercolor=CORAL_DIM, lightcolor=FIELD, darkcolor=FIELD, padding=8)
-        s.map("TEntry", bordercolor=[("focus", CORAL)])
-        s.configure("Dark.TNotebook", background=PANEL, borderwidth=0, tabmargins=(0, 0, 0, 6), bordercolor=PANEL,
-                    lightcolor=PANEL, darkcolor=PANEL)
-        s.configure("Dark.TNotebook.Tab", lightcolor=FIELD, bordercolor=FIELD)
-        s.configure("Dark.TNotebook.Tab", background=FIELD, foreground=CORAL_SOFT, padding=(11, 6), borderwidth=0,
-                    font=(FONT, 10, "bold"))
-        s.map("Dark.TNotebook.Tab", background=[("selected", CORAL_DIM)], foreground=[("selected", "white")])
-        s.configure("TCombobox", fieldbackground=FIELD, background=FIELD, foreground=CORAL, arrowcolor=CORAL,
-                    bordercolor=CORAL_DIM, lightcolor=FIELD, darkcolor=FIELD, padding=4)
-        s.map("TCombobox", fieldbackground=[("readonly", FIELD)], foreground=[("readonly", CORAL)])
+        s.configure("TEntry", fieldbackground=FIELD, foreground=TEXT, insertcolor=CORAL, bordercolor=BORDER,
+                    lightcolor=BORDER, darkcolor=BORDER, padding=7, relief="flat")
+        s.map("TEntry", bordercolor=[("focus", CORAL)], lightcolor=[("focus", CORAL)], darkcolor=[("focus", CORAL)],
+              fieldbackground=[("disabled", BG)], foreground=[("disabled", DISABLED)])
+        s.configure("TCombobox", fieldbackground=FIELD, background=FIELD, foreground=TEXT, arrowcolor=MUTED,
+                    bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, padding=5, arrowsize=14,
+                    selectbackground=FIELD, selectforeground=TEXT)
+        s.map("TCombobox", fieldbackground=[("readonly", FIELD), ("disabled", BG)],
+              foreground=[("readonly", TEXT), ("disabled", DISABLED)], background=[("active", HOVER)],
+              arrowcolor=[("active", CORAL), ("focus", CORAL)], bordercolor=[("focus", CORAL)],
+              lightcolor=[("focus", CORAL)], darkcolor=[("focus", CORAL)])
         self.option_add("*TCombobox*Listbox.background", FIELD)
-        self.option_add("*TCombobox*Listbox.foreground", CORAL)
-        self.option_add("*TCombobox*Listbox.selectBackground", CORAL_DIM)
-        s.configure("Coral.Horizontal.TProgressbar", troughcolor=FIELD, background=CORAL,
-                    bordercolor=PANEL, lightcolor=CORAL, darkcolor=CORAL, thickness=8)
+        self.option_add("*TCombobox*Listbox.foreground", TEXT)
+        self.option_add("*TCombobox*Listbox.selectBackground", CORAL)
+        self.option_add("*TCombobox*Listbox.selectForeground", "white")
+        self.option_add("*TCombobox*Listbox.font", (FONT, 10))
+        s.configure("Coral.Horizontal.TProgressbar", troughcolor=FIELD, background=CORAL, bordercolor=FIELD,
+                    lightcolor=CORAL, darkcolor=CORAL, thickness=8)
+        s.configure("Vertical.TScrollbar", background=FIELD, troughcolor=PANEL, bordercolor=PANEL, arrowcolor=MUTED)
 
     def _btn(self, parent, text, cmd, solid=False, **kw):
         b = tk.Button(parent, text=text, command=cmd, relief="flat", bd=0, cursor="hand2",
                       font=(FONT, 10, "bold"),
-                      bg=CORAL if solid else FIELD, fg=BG if solid else CORAL,
-                      activebackground=CORAL_SOFT if solid else CORAL_DIM,
-                      activeforeground=BG if solid else "white",
-                      disabledforeground="#6b4757", padx=14, pady=7, **kw)
+                      bg=CORAL if solid else FIELD, fg="white" if solid else TEXT,
+                      activebackground=CORAL_SOFT if solid else HOVER,
+                      activeforeground="white" if solid else TEXT,
+                      disabledforeground=DISABLED, padx=14, pady=7, highlightthickness=1,
+                      highlightbackground=CORAL if solid else BORDER, highlightcolor=CORAL, **kw)
         return b
 
     def _tab(self, name):
         """Pestaña del panel izquierdo; devuelve el marco interior donde colocar los controles."""
-        outer = tk.Frame(self.tabs, bg=PANEL)
-        self.tabs.add(outer, text=f"  {name}  ")
-        inner = tk.Frame(outer, bg=PANEL)
-        inner.pack(fill="both", expand=True, padx=4, pady=6)
-        return inner
+        return self.tabs.add(name)
 
     def _check(self, parent, text, var, **kw):
-        return tk.Checkbutton(parent, text="  " + text, variable=var, bg=PANEL, fg=CORAL, activebackground=PANEL,
-                              activeforeground=CORAL_SOFT, selectcolor=FIELD, font=(FONT, 10), bd=0,
+        return tk.Checkbutton(parent, text="  " + text, variable=var, bg=PANEL, fg=TEXT, activebackground=PANEL,
+                              activeforeground=TEXT, selectcolor=FIELD, font=(FONT, 10), bd=0,
                               highlightthickness=0, cursor="hand2", **kw)
 
     # ---------- Presets ----------
@@ -293,7 +350,7 @@ class App(tk.Tk):
         has_q = AUDIO_FORMATS.get(self.v["audio_fmt"].get(), ("", "", False))[2]
         self.audio_q_box.config(state="readonly" if has_q else "disabled")
 
-    def _label(self, parent, text="", size=10, bold=False, color=CORAL, bg=BG, **kw):
+    def _label(self, parent, text="", size=10, bold=False, color=TEXT, bg=BG, **kw):
         return tk.Label(parent, text=text, bg=bg, fg=color, font=(FONT, size, "bold" if bold else "normal"), **kw)
 
     # ---------- UI ----------
@@ -301,14 +358,15 @@ class App(tk.Tk):
         # Cabecera
         head = tk.Frame(self, bg=BG)
         head.pack(fill="x", padx=24, pady=(20, 8))
-        self._label(head, "▶  Descargador de YouTube", 18, True).pack(side="left")
+        self._label(head, "▶", 18, True, CORAL).pack(side="left")
+        self._label(head, "  Descargador de YouTube", 18, True).pack(side="left")
         self._label(head, f"v{updater.VERSION}", 9, False, MUTED).pack(side="left", padx=(10, 0), pady=(8, 0))
         self.btn_help = self._btn(head, "Ayuda ▾", self._show_help_menu)
         self.btn_help.config(pady=3, padx=10)
         self.btn_help.pack(side="right")
         self.engine_lbl = self._label(head, "", 9, False, MUTED)
         self.engine_lbl.pack(side="right", padx=(0, 12), pady=(2, 0))
-        self.help_menu = tk.Menu(self, tearoff=0, bg=PANEL, fg=CORAL, activebackground=CORAL_DIM,
+        self.help_menu = tk.Menu(self, tearoff=0, bg=PANEL, fg=TEXT, activebackground=CORAL,
                                  activeforeground="white", font=(FONT, 10), bd=0)
         self.help_menu.add_command(label="Abrir log", command=self._open_log)
         self.help_menu.add_command(label="Acerca de…", command=self._about)
@@ -360,7 +418,7 @@ class App(tk.Tk):
         self._btn(prow, "Guardar", self._save_preset).pack(side="left")
         self._btn(prow, "Borrar", self._delete_preset).pack(side="left", padx=(6, 0))
 
-        self.tabs = ttk.Notebook(inner, style="Dark.TNotebook")
+        self.tabs = TabBar(inner)
         self.tabs.pack(fill="both", expand=True)
         tab_video = self._tab("Video")
         tab_scale = self._tab("Escala/corte")
@@ -380,7 +438,7 @@ class App(tk.Tk):
                                     10, False, MUTED, PANEL, justify="left")
         self.res_hint.pack(anchor="w", pady=10)
 
-        tk.Frame(tab_video, bg=CORAL_DIM, height=1).pack(fill="x", pady=12)
+        tk.Frame(tab_video, bg=BORDER, height=1).pack(fill="x", pady=12)
 
         self._label(tab_video, "FORMATO DE SALIDA", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
         self.fmt_var = tk.StringVar(value=next((k for k, v in OUT_FORMATS.items() if v == self.settings["fmt"]),
@@ -389,7 +447,7 @@ class App(tk.Tk):
                                     font=(FONT, 10))
         self.fmt_box.pack(fill="x", pady=(6, 0))
         self._label(tab_video, "ProRes y HAP generan archivos muy pesados (varios GB por minuto en 4K).",
-                    8, False, MUTED, PANEL, wraplength=self.px(380), justify="left").pack(anchor="w", pady=(4, 0))
+                    9, False, MUTED, PANEL, wraplength=self.px(440), justify="left").pack(anchor="w", pady=(4, 0))
 
         # --- Pestaña Extras ---
         s = self.settings
@@ -407,14 +465,14 @@ class App(tk.Tk):
         self.audio_var = self.v["audio"]
 
         # --- Video: FPS ---
-        tk.Frame(tab_video, bg=CORAL_DIM, height=1).pack(fill="x", pady=12)
+        tk.Frame(tab_video, bg=BORDER, height=1).pack(fill="x", pady=12)
         frow = tk.Frame(tab_video, bg=PANEL)
         frow.pack(fill="x")
         self._label(frow, "FPS MÁXIMOS", 9, True, CORAL_SOFT, PANEL).pack(side="left")
         ttk.Combobox(frow, textvariable=self.v["fps"], values=FPS_CHOICES, state="readonly", width=9,
                      font=(FONT, 10)).pack(side="left", padx=10)
         self._label(tab_video, "Limita los cuadros por segundo (se elige un formato de 30 o 60 si existe).",
-                    8, False, MUTED, PANEL, wraplength=self.px(380), justify="left").pack(anchor="w", pady=(4, 0))
+                    9, False, MUTED, PANEL, wraplength=self.px(440), justify="left").pack(anchor="w", pady=(4, 0))
 
         # --- Escala y corte ---
         self._label(tab_scale, "RESOLUCIÓN EXACTA DE SALIDA", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
@@ -432,9 +490,9 @@ class App(tk.Tk):
         self.v["scale_preset"].trace_add("write", lambda *_: self._sync_scale())
         self._sync_scale()
         self._label(tab_scale, "Re-codifica el video (con «Original» se usa H.264). HAP exige múltiplos de 4: "
-                    "se ajusta solo.", 8, False, MUTED, PANEL, wraplength=self.px(380), justify="left").pack(anchor="w")
+                    "se ajusta solo.", 9, False, MUTED, PANEL, wraplength=self.px(440), justify="left").pack(anchor="w")
 
-        tk.Frame(tab_scale, bg=CORAL_DIM, height=1).pack(fill="x", pady=12)
+        tk.Frame(tab_scale, bg=BORDER, height=1).pack(fill="x", pady=12)
         self._label(tab_scale, "RECORTAR TRAMO", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
         t1 = tk.Frame(tab_scale, bg=PANEL)
         t1.pack(fill="x", pady=(6, 4))
@@ -444,7 +502,7 @@ class App(tk.Tk):
         ttk.Entry(t1, textvariable=self.v["trim_end"], width=9).pack(side="left", padx=6)
         self._check(tab_scale, "Corte exacto (re-codifica)", self.v["trim_exact"]).pack(anchor="w", pady=(2, 0))
         self._label(tab_scale, "Formato mm:ss u hh:mm:ss. Vacío = sin recorte (Fin vacío = hasta el final). "
-                    "El nombre del archivo indica el tramo.", 8, False, MUTED, PANEL, wraplength=self.px(380),
+                    "El nombre del archivo indica el tramo.", 9, False, MUTED, PANEL, wraplength=self.px(440),
                     justify="left").pack(anchor="w")
 
         self._label(tab_extra, "AUDIO", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
@@ -461,7 +519,7 @@ class App(tk.Tk):
         self.v["audio_fmt"].trace_add("write", lambda *_: self._sync_audio_quality())
         self._sync_audio_quality()
 
-        tk.Frame(tab_extra, bg=CORAL_DIM, height=1).pack(fill="x", pady=10)
+        tk.Frame(tab_extra, bg=BORDER, height=1).pack(fill="x", pady=10)
         self._label(tab_extra, "SUBTÍTULOS", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
         self._check(tab_extra, "Descargar subtítulos", self.v["subs"]).pack(anchor="w", pady=(6, 2))
         srow = tk.Frame(tab_extra, bg=PANEL)
@@ -471,15 +529,15 @@ class App(tk.Tk):
         ttk.Combobox(srow, textvariable=self.v["subs_mode"], values=SUBS_MODES, state="readonly", width=16,
                      font=(FONT, 10)).pack(side="left")
         self._label(tab_extra, "Incrustar solo funciona en MP4; en MOV se guarda el .srt aparte.", 8, False, MUTED,
-                    PANEL, wraplength=self.px(380), justify="left").pack(anchor="w")
+                    PANEL, wraplength=self.px(440), justify="left").pack(anchor="w")
 
-        tk.Frame(tab_extra, bg=CORAL_DIM, height=1).pack(fill="x", pady=10)
+        tk.Frame(tab_extra, bg=BORDER, height=1).pack(fill="x", pady=10)
         self._label(tab_extra, "MINIATURA Y METADATOS", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
         self._check(tab_extra, "Incrustar miniatura y metadatos", self.v["embed"]).pack(anchor="w", pady=(6, 2))
         self._label(tab_extra, "Solo MP4, MP3 y M4A (en MOV, Opus, WAV y FLAC se ignora la miniatura).", 8, False,
-                    MUTED, PANEL, wraplength=self.px(380), justify="left").pack(anchor="w")
+                    MUTED, PANEL, wraplength=self.px(440), justify="left").pack(anchor="w")
 
-        tk.Frame(tab_extra, bg=CORAL_DIM, height=1).pack(fill="x", pady=8)
+        tk.Frame(tab_extra, bg=BORDER, height=1).pack(fill="x", pady=8)
         crow = tk.Frame(tab_extra, bg=PANEL)
         crow.pack(fill="x")
         self._label(crow, "COOKIES DEL NAVEGADOR", 9, True, CORAL_SOFT, PANEL).pack(side="left")
@@ -487,20 +545,21 @@ class App(tk.Tk):
                      font=(FONT, 10)).pack(side="left", padx=10)
         self.v["cookies"].trace_add("write", lambda *_: setattr(self.dl, "cookie_browser", self.v["cookies"].get()))
         self._label(tab_extra, "Si YouTube pide iniciar sesión. Firefox suele ser lo más fiable; en Chrome/Edge "
-                    "recientes puede fallar la lectura.", 8, False, MUTED, PANEL, wraplength=self.px(380),
+                    "recientes puede fallar la lectura.", 9, False, MUTED, PANEL, wraplength=self.px(440),
                     justify="left").pack(anchor="w", pady=(4, 0))
 
         # --- Cola ---
         self._label(tab_queue, "COLA DE DESCARGAS", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
         self._label(tab_queue, "Configura un video y pulsa «+ Cola». DESCARGAR procesa toda la cola.", 8, False, MUTED,
-                    PANEL, wraplength=self.px(380), justify="left").pack(anchor="w", pady=(2, 6))
+                    PANEL, wraplength=self.px(440), justify="left").pack(anchor="w", pady=(2, 6))
         qrow = tk.Frame(tab_queue, bg=PANEL)
         qrow.pack(side="bottom", fill="x", pady=(6, 0))
         self._btn(qrow, "Quitar seleccionado", self._queue_remove).pack(side="left")
         self._btn(qrow, "Vaciar", self._queue_clear).pack(side="left", padx=6)
-        self.queue_list = tk.Listbox(tab_queue, bg=FIELD, fg=CORAL, selectbackground=CORAL_DIM,
-                                     selectforeground="white", relief="flat", highlightthickness=0,
-                                     font=(FONT, 9), activestyle="none", selectmode="extended")
+        self.queue_list = tk.Listbox(tab_queue, bg=FIELD, fg=TEXT, selectbackground=CORAL,
+                                     selectforeground="white", relief="flat", highlightthickness=1,
+                                     highlightbackground=BORDER, highlightcolor=BORDER,
+                                     font=(FONT, 10), activestyle="none", selectmode="extended")
         self.queue_list.pack(fill="both", expand=True)
 
         # ----- Panel derecho: preview -----
@@ -513,9 +572,9 @@ class App(tk.Tk):
         acts = tk.Frame(rin, bg=PANEL)
         acts.pack(side="bottom", fill="x")
         self.btn_dl = tk.Button(acts, text="⬇   DESCARGAR", command=self.download, relief="flat", bd=0,
-                                cursor="hand2", font=(FONT, 14, "bold"), bg=CORAL, fg=BG,
-                                activebackground=CORAL_SOFT, activeforeground=BG,
-                                disabledforeground="#6b4757", pady=12, state="disabled")
+                                cursor="hand2", font=(FONT, 14, "bold"), bg=CORAL, fg="white",
+                                activebackground=CORAL_SOFT, activeforeground="white",
+                                disabledforeground=DISABLED, pady=12, state="disabled")
         self.btn_dl.pack(side="left", fill="x", expand=True)
         self.btn_queue = self._btn(acts, "+ Cola", self._add_to_queue)
         self.btn_queue.config(state="disabled", pady=14)
@@ -534,8 +593,8 @@ class App(tk.Tk):
         self.btn_copyerr = self._btn(self.result_row, "Copiar error", self._copy_error)
 
         self.status = tk.StringVar(value="Pega un enlace y pulsa Analizar.")
-        tk.Label(rin, textvariable=self.status, bg=PANEL, fg=CORAL_SOFT, font=(FONT, 9),
-                 wraplength=self.px(380), justify="left", anchor="w").pack(side="bottom", fill="x", pady=(0, 8))
+        tk.Label(rin, textvariable=self.status, bg=PANEL, fg=MUTED, font=(FONT, 10),
+                 wraplength=self.px(440), justify="left", anchor="w").pack(side="bottom", fill="x", pady=(0, 8))
         self.bar = ttk.Progressbar(rin, maximum=100, style="Coral.Horizontal.TProgressbar")
         self.bar.pack(side="bottom", fill="x", pady=(0, 6))
 
@@ -547,7 +606,7 @@ class App(tk.Tk):
         self.thumb.place(relx=0.5, rely=0.5, anchor="center")
         self.dur_badge = self._label(self.thumb, "", 9, True, "white", "#000000", padx=6, pady=1)
 
-        self.title_lbl = self._label(rin, "Sin video", 12, True, CORAL, PANEL, wraplength=self.px(360), justify="left",
+        self.title_lbl = self._label(rin, "Sin video", 12, True, TEXT, PANEL, wraplength=self.px(360), justify="left",
                                      anchor="w")
         self.title_lbl.pack(anchor="w", pady=(8, 2), fill="x")
         self.chan_lbl = self._label(rin, "", 10, False, CORAL_SOFT, PANEL, anchor="w")
@@ -561,7 +620,7 @@ class App(tk.Tk):
             cell = tk.Frame(grid, bg=PANEL)
             cell.grid(row=i // 2, column=i % 2, sticky="w", pady=2)
             self._label(cell, key.upper() + "  ", 8, True, MUTED, PANEL).pack(side="left")
-            v = self._label(cell, "—", 10, True, CORAL, PANEL)
+            v = self._label(cell, "—", 10, True, TEXT, PANEL)
             v.pack(side="left")
             self.meta[key] = v
 
@@ -686,8 +745,8 @@ class App(tk.Tk):
             elif h >= 1080:
                 label += " HD"
             tk.Checkbutton(self.res_frame, text=label, variable=var, indicatoron=False,
-                           bg=FIELD, fg=CORAL, selectcolor=CORAL, activebackground=CORAL_DIM,
-                           activeforeground="white", font=(FONT, 10, "bold"), relief="flat", bd=0,
+                           bg=FIELD, fg=TEXT, selectcolor=CORAL, activebackground=HOVER,
+                           activeforeground=TEXT, font=(FONT, 10, "bold"), relief="flat", bd=0,
                            highlightthickness=0, cursor="hand2", width=9, pady=7,
                            command=self._refresh_chips).grid(row=i // 3, column=i % 3, padx=4, pady=4, sticky="w")
         self._refresh_chips()
@@ -697,7 +756,7 @@ class App(tk.Tk):
         for w in self.res_frame.winfo_children():
             if isinstance(w, tk.Checkbutton):
                 sel = w.getvar(str(w.cget("variable")))
-                w.config(fg=BG if str(sel) in ("1", "True") else CORAL)
+                w.config(fg="white" if str(sel) in ("1", "True") else TEXT)
 
     # ---------- Análisis ----------
     def _url_matches(self) -> bool:
@@ -725,7 +784,7 @@ class App(tk.Tk):
             pass
         box = tk.Frame(dlg, bg=PANEL)
         box.pack(padx=24, pady=20)
-        self._label(box, "Este enlace es de un video dentro de una lista.", 11, True, CORAL, PANEL).pack(anchor="w")
+        self._label(box, "Este enlace es de un video dentro de una lista.", 11, True, TEXT, PANEL).pack(anchor="w")
         self._label(box, "¿Descargar solo este video o toda la lista?", 10, False, CORAL_SOFT, PANEL
                     ).pack(anchor="w", pady=(4, 14))
         row = tk.Frame(box, bg=PANEL)
@@ -1011,10 +1070,10 @@ class App(tk.Tk):
         dlg.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
         box = tk.Frame(dlg, bg=PANEL)
         box.pack(fill="both", expand=True, padx=24, pady=20)
-        self._label(box, "¡Hay una nueva versión!", 15, True, CORAL, PANEL).pack(anchor="w")
+        self._label(box, "¡Hay una nueva versión!", 15, True, TEXT, PANEL).pack(anchor="w")
         self._label(box, f"Versión instalada: {updater.VERSION}      Nueva: {upd['version']}", 10, False,
                     CORAL_SOFT, PANEL).pack(anchor="w", pady=(4, 10))
-        notes = tk.Text(box, height=7, bg=FIELD, fg=CORAL, relief="flat", font=(FONT, 9), wrap="word",
+        notes = tk.Text(box, height=7, bg=FIELD, fg=TEXT, relief="flat", font=(FONT, 9), wrap="word",
                         highlightthickness=0, padx=8, pady=8)
         notes.insert("1.0", upd["notes"] or "Mejoras y correcciones.")
         notes.config(state="disabled")
@@ -1040,8 +1099,8 @@ class App(tk.Tk):
             threading.Thread(target=work, daemon=True).start()
 
         btn_ok = tk.Button(row, text="Actualizar ahora", command=start, relief="flat", bd=0, cursor="hand2",
-                           font=(FONT, 11, "bold"), bg=CORAL, fg=BG, activebackground=CORAL_SOFT,
-                           activeforeground=BG, disabledforeground="#6b4757", padx=16, pady=9)
+                           font=(FONT, 11, "bold"), bg=CORAL, fg="white", activebackground=CORAL_SOFT,
+                           activeforeground="white", disabledforeground=DISABLED, padx=16, pady=9)
         btn_ok.pack(side="left", fill="x", expand=True)
         btn_later = self._btn(row, "Más tarde", dlg.destroy)
         btn_later.config(pady=11)
