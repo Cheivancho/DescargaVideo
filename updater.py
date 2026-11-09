@@ -186,7 +186,7 @@ def download_ytdlp_next() -> str | None:
     return latest
 
 
-def background_ytdlp_update() -> str | None:
+def background_ytdlp_update(force: bool = False) -> str | None:
     """Consulta PyPI y deja la versión nueva en 'yt-dlp.next' (se aplica al próximo arranque).
 
     Pensada para un hilo en segundo plano. Guarda siempre 'ytdlp_last_check'; si falla, el
@@ -194,7 +194,7 @@ def background_ytdlp_update() -> str | None:
     """
     st = load_state()
     every = YTDLP_CHECK_EVERY if st.get("ytdlp_last_ok", True) else YTDLP_RETRY_EVERY
-    if time.time() - st.get("ytdlp_last_check", 0) < every:
+    if not force and time.time() - st.get("ytdlp_last_check", 0) < every:
         return None
     try:
         v = download_ytdlp_next()

@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import traceback
 import urllib.parse
 import urllib.request
 from tkinter import filedialog, messagebox, ttk
@@ -246,6 +247,35 @@ class ProgressTracker:
         return self.last, " · ".join(parts)
 
 
+DEFAULT_SETTINGS = {
+    "out_dir": os.path.join(os.path.expanduser("~"), "Videos", "YouTube"),
+    "fmt": "h264", "audio": False, "preset": "", "geometry": "",
+}
+_YT_LINK = re.compile(r"^https?://(?:(?:www|m|music)\.)?(?:youtube\.com|youtu\.be)/\S+$", re.I)
+
+
+def load_settings(state: dict | None = None) -> dict:
+    """Ajustes guardados en state.json['settings']. Tolera claves ausentes, tipos erróneos y estados corruptos."""
+    raw = (updater.load_state() if state is None else state).get("settings")
+    s = dict(DEFAULT_SETTINGS)
+    if isinstance(raw, dict):
+        for k, default in DEFAULT_SETTINGS.items():
+            if isinstance(raw.get(k), type(default)):
+                s[k] = raw[k]
+    if s["fmt"] not in OUT_FORMATS.values():
+        s["fmt"] = DEFAULT_SETTINGS["fmt"]
+    if not re.fullmatch(r"\d{3,5}x\d{3,5}", s["geometry"]):
+        s["geometry"] = ""
+    return s
+
+
+def youtube_link(text: str) -> str | None:
+    """Primer enlace de YouTube del texto (p. ej. del portapapeles), o None."""
+    text = (text or "").strip()
+    line = text.splitlines()[0].strip() if text else ""
+    return line if _YT_LINK.match(line) else None
+
+
 def fmt_num(n):
     if n is None:
         return "—"
@@ -297,13 +327,55 @@ class App(tk.Tk):
         self._out_fmt = "h264"
         self.cancel = False
         self.thumb_img = None
-        self.out_dir = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Videos", "YouTube"))
+        self.settings = load_settings()
+        self.last_error = ""
+        self.out_dir = tk.StringVar(value=self.settings["out_dir"])
+        self._restore_geometry()
         self._styles()
         self._build()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<FocusIn>", self._on_focus_in)
+        self.after(300, self._paste_clipboard_link)
         self.after(100, self._poll)
         self.after(1200, lambda: threading.Thread(target=self._check_update_worker, daemon=True).start())
         # La consulta/descarga de yt-dlp va en segundo plano y DESPUÉS de mostrar la ventana
         self.after(2500, lambda: threading.Thread(target=self._engine_update_worker, daemon=True).start())
+
+    def _restore_geometry(self) -> None:
+        m = re.fullmatch(r"(\d+)x(\d+)", self.settings["geometry"])
+        if not m:
+            return
+        w = min(max(int(m[1]), self.px(960)), self.winfo_screenwidth())
+        h = min(max(int(m[2]), self.px(640)), self.winfo_screenheight())
+        self.geometry(f"{w}x{h}")
+
+    def _save_settings(self) -> None:
+        self.settings.update(out_dir=self.out_dir.get(), fmt=OUT_FORMATS.get(self.fmt_var.get(), "h264"),
+                             audio=bool(self.audio_var.get()), geometry=f"{self.winfo_width()}x{self.winfo_height()}")
+        updater.update_state(settings=self.settings)
+
+    def _on_close(self) -> None:
+        try:
+            self._save_settings()
+        except Exception:  # noqa: BLE001
+            log.warning("No se pudieron guardar los ajustes", exc_info=True)
+        self.destroy()
+
+    def _paste_clipboard_link(self) -> None:
+        """Si el campo está vacío y el portapapeles tiene un enlace de YouTube, lo pega (sin analizar)."""
+        if self.url_var.get().strip() or self.busy:
+            return
+        try:
+            link = youtube_link(self.clipboard_get())
+        except tk.TclError:  # portapapeles vacío o con algo que no es texto
+            return
+        if link:
+            self.url_var.set(link)
+            self.status.set("Enlace pegado desde el portapapeles. Pulsa Analizar.")
+
+    def _on_focus_in(self, event) -> None:
+        if event.widget is self:
+            self._paste_clipboard_link()
 
     def px(self, n: int) -> int:
         """Píxeles a 96 DPI -> píxeles reales de esta pantalla."""
@@ -338,8 +410,18 @@ class App(tk.Tk):
         head.pack(fill="x", padx=24, pady=(20, 8))
         self._label(head, "▶  Descargador de YouTube", 18, True).pack(side="left")
         self._label(head, f"v{updater.VERSION}", 9, False, MUTED).pack(side="left", padx=(10, 0), pady=(8, 0))
+        self.btn_help = self._btn(head, "Ayuda ▾", self._show_help_menu)
+        self.btn_help.config(pady=3, padx=10)
+        self.btn_help.pack(side="right")
         self.engine_lbl = self._label(head, "", 9, False, MUTED)
-        self.engine_lbl.pack(side="right", pady=(8, 0))
+        self.engine_lbl.pack(side="right", padx=(0, 12), pady=(2, 0))
+        self.help_menu = tk.Menu(self, tearoff=0, bg=PANEL, fg=CORAL, activebackground=CORAL_DIM,
+                                 activeforeground="white", font=(FONT, 10), bd=0)
+        self.help_menu.add_command(label="Abrir log", command=self._open_log)
+        self.help_menu.add_command(label="Acerca de…", command=self._about)
+        self.help_menu.add_separator()
+        self.help_menu.add_command(label="Buscar actualizaciones ahora", command=self._check_updates_now)
+        self.help_menu.add_command(label="Restaurar motor incluido", command=self._reset_engine)
 
         # Barra de URL
         bar = tk.Frame(self, bg=BG)
@@ -379,7 +461,8 @@ class App(tk.Tk):
         tk.Frame(inner, bg=CORAL_DIM, height=1).pack(fill="x", pady=16)
 
         self._label(inner, "FORMATO DE SALIDA", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
-        self.fmt_var = tk.StringVar(value=next(iter(OUT_FORMATS)))
+        self.fmt_var = tk.StringVar(value=next((k for k, v in OUT_FORMATS.items() if v == self.settings["fmt"]),
+                                               next(iter(OUT_FORMATS))))
         ttk.Combobox(inner, textvariable=self.fmt_var, values=list(OUT_FORMATS), state="readonly",
                      font=(FONT, 10)).pack(fill="x", pady=(6, 0))
         self._label(inner, "ProRes y HAP generan archivos muy pesados (varios GB por minuto en 4K).",
@@ -388,7 +471,7 @@ class App(tk.Tk):
         tk.Frame(inner, bg=CORAL_DIM, height=1).pack(fill="x", pady=16)
 
         self._label(inner, "EXTRAS", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
-        self.audio_var = tk.BooleanVar(value=False)
+        self.audio_var = tk.BooleanVar(value=self.settings["audio"])
         tk.Checkbutton(inner, text="  Descargar también solo audio (MP3)", variable=self.audio_var,
                        bg=PANEL, fg=CORAL, activebackground=PANEL, activeforeground=CORAL_SOFT,
                        selectcolor=FIELD, font=(FONT, 10), bd=0, highlightthickness=0,
@@ -421,6 +504,11 @@ class App(tk.Tk):
         self.btn_cancel.pack(side="left", padx=(8, 0))
         self._update_dl_style()
 
+        self.result_row = tk.Frame(rin, bg=PANEL)  # «Abrir carpeta» / «Copiar error»: solo cuando aplican
+        self.result_row.pack(side="bottom", fill="x", pady=(0, 6))
+        self.btn_open = self._btn(self.result_row, "📂  Abrir carpeta", self._open_folder)
+        self.btn_copyerr = self._btn(self.result_row, "Copiar error", self._copy_error)
+
         self.status = tk.StringVar(value="Pega un enlace y pulsa Analizar.")
         tk.Label(rin, textvariable=self.status, bg=PANEL, fg=CORAL_SOFT, font=(FONT, 9),
                  wraplength=self.px(380), justify="left", anchor="w").pack(side="bottom", fill="x", pady=(0, 8))
@@ -452,6 +540,68 @@ class App(tk.Tk):
             v = self._label(cell, "—", 10, True, CORAL, PANEL)
             v.pack(side="left")
             self.meta[key] = v
+
+    def _show_help_menu(self) -> None:
+        self.help_menu.tk_popup(self.btn_help.winfo_rootx(), self.btn_help.winfo_rooty() + self.btn_help.winfo_height())
+
+    def _open_log(self) -> None:
+        path = os.path.join(updater.DATA_DIR, "log.txt")
+        if os.path.isfile(path):
+            os.startfile(path)
+        else:
+            messagebox.showinfo("Log", "Todavía no hay registro (log.txt).")
+
+    def _about(self) -> None:
+        pend = updater.pending_update_version()
+        text = f"Descargador de YouTube v{updater.VERSION}\nyt-dlp {yt_dlp.version.__version__}"
+        if pend:
+            text += f"\n(motor {pend} listo; se aplica al reiniciar)"
+        text += f"\nMotor JavaScript: {', '.join(self.js_runtimes) or 'ninguno'}"
+        messagebox.showinfo("Acerca de", text)
+
+    def _check_updates_now(self) -> None:
+        self.status.set("Buscando actualizaciones…")
+
+        def work():
+            try:
+                upd = updater.check_app_update()
+                v = updater.background_ytdlp_update(force=True)
+                if v:
+                    self.q.put(("engine", v))
+                if upd:
+                    self.q.put(("app_update", upd))
+                elif v:
+                    self.q.put(("msgbox", "Actualizaciones", f"Motor yt-dlp {v} descargado (se aplica al reiniciar)."))
+                else:
+                    self.q.put(("msgbox", "Actualizaciones", "Todo está al día."))
+            except Exception as e:  # noqa: BLE001
+                log.warning("Búsqueda manual de actualizaciones fallida", exc_info=True)
+                self.q.put(("msgbox", "Actualizaciones", f"No se pudo comprobar: {e}"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _reset_engine(self) -> None:
+        if messagebox.askyesno("Restaurar motor", "Se borrará el yt-dlp descargado y se volverá al incluido en la "
+                               "app.\nSe aplica al reiniciar. ¿Continuar?"):
+            updater.reset_ytdlp_engine()
+            self.engine_lbl.config(text="Motor restaurado (se aplica al reiniciar)")
+
+    def _open_folder(self) -> None:
+        path = self.out_dir.get()
+        if os.path.isdir(path):
+            os.startfile(path)
+
+    def _copy_error(self) -> None:
+        self.clipboard_clear()
+        self.clipboard_append(self.last_error)
+        self.status.set("Error copiado al portapapeles.")
+
+    def _show_result_buttons(self, ok: bool, has_error: bool) -> None:
+        for b in (self.btn_open, self.btn_copyerr):
+            b.pack_forget()
+        if ok:
+            self.btn_open.pack(side="left")
+        if has_error:
+            self.btn_copyerr.pack(side="left", padx=(8 if ok else 0, 0))
 
     def _update_dl_style(self):
         if str(self.btn_dl["state"]) == "disabled":
@@ -602,6 +752,7 @@ class App(tk.Tk):
             self.q.put(("analyzed", url, choice, info, is_pl, heights, data, fps))
         except Exception as e:  # noqa: BLE001
             log.exception("Error al analizar %s", url)
+            self.last_error = f"Al analizar {url}\n{traceback.format_exc()}"
             self.q.put(("error", str(e)))
 
     def _apply_info(self, url, choice, info, is_pl, heights, data, fps):
@@ -666,6 +817,9 @@ class App(tk.Tk):
         os.makedirs(self.out_dir.get(), exist_ok=True)
         self.busy = True
         self.cancel = False
+        self.last_error = ""
+        self._show_result_buttons(False, False)
+        self._save_settings()
         self._set_dl(False)
         self.btn_an.config(state="disabled")
         self.btn_cancel.config(state="normal")
@@ -860,18 +1014,20 @@ class App(tk.Tk):
                     if self.cancel:
                         raise yt_dlp.utils.DownloadCancelled("Cancelado por el usuario") from None
                     log.exception("Falló el trabajo %s de %s", label, url)
+                    self.last_error = f"Trabajo {label} de {url}\n{traceback.format_exc()}"
                     failed.append(f"{label}: {str(e)[:120]}")
             msg = "✔ Descarga completada en: " + out
             if self.skipped:
                 msg += "\nYa existían: " + ", ".join(self.skipped)
             if failed:
                 msg += "\nFallaron: " + "; ".join(failed)
-            self.q.put(("done", msg))
+            self.q.put(("done", msg, not failed))
         except yt_dlp.utils.DownloadCancelled:
-            self.q.put(("done", "Descarga cancelada."))
+            self.q.put(("done", "Descarga cancelada.", False))
         except Exception as e:  # noqa: BLE001
             log.exception("Error en la descarga")
-            self.q.put(("done", f"Error: {e}"))
+            self.last_error = f"Descarga de {url}\n{traceback.format_exc()}"
+            self.q.put(("done", f"Error: {e}", False))
         finally:
             self.tracker = None
 
@@ -980,6 +1136,8 @@ class App(tk.Tk):
                     self.status.set(msg[2])
                 elif kind == "status":
                     self.status.set(msg[1])
+                elif kind == "msgbox":
+                    messagebox.showinfo(msg[1], msg[2])
                 elif kind == "done":
                     self.busy = False
                     self.bar["value"] = 0
@@ -987,6 +1145,7 @@ class App(tk.Tk):
                     self._set_dl(self._url_matches())
                     self.btn_cancel.config(state="disabled")
                     self.status.set(msg[1])
+                    self._show_result_buttons(msg[2], bool(self.last_error))
         except queue.Empty:
             pass
         self.after(100, self._poll)
