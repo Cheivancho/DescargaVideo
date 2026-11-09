@@ -551,12 +551,40 @@ def build_video_filter(spec: dict) -> str:
     return ""
 
 
+COOKIE_BROWSERS = ["Ninguno", "Firefox", "Chrome", "Edge", "Brave"]
+
+
+class DownloadPaused(yt_dlp.utils.DownloadCancelled):
+    """Se lanza desde el hook de progreso para detener la descarga conservando los .part (Pausar)."""
+
+
+def friendly_error(msg: str, browser: str = "") -> str:
+    """Traduce los errores más comunes de yt-dlp a un mensaje comprensible; el resto se deja tal cual."""
+    m = re.sub(r"^(?:ERROR:\s*)+", "", (msg or "").strip())
+    low = m.lower()
+    if browser and browser != "Ninguno" and ("dpapi" in low or "decrypt" in low or ("cookie" in low and any(
+            k in low for k in ("could not copy", "database", "permission", "locked", "could not find",
+                               "unable to read", "failed to")))):
+        return (f"No se pudieron leer las cookies de {browser}. Chrome y Edge recientes bloquean el acceso (cierra el "
+                "navegador por completo) o las cifran; Firefox suele ser lo más fiable. Prueba con otro navegador o "
+                "con «Ninguno».")
+    if "sign in to confirm" in low or "not a bot" in low:
+        return ("YouTube pide verificar que no eres un robot. Prueba eligiendo las cookies de un navegador donde "
+                "hayas iniciado sesión (pestaña Extras).")
+    if any(k in low for k in ("private video", "video unavailable", "this video is not available")):
+        return "El video no está disponible (privado, eliminado o bloqueado en tu región)."
+    if any(k in low for k in ("getaddrinfo failed", "unable to download webpage", "timed out", "connection reset",
+                              "network is unreachable", "failed to resolve")):
+        return "No hay conexión con YouTube. Revisa tu internet e inténtalo de nuevo."
+    return m
+
+
 DEFAULT_SETTINGS = {
     "out_dir": os.path.join(os.path.expanduser("~"), "Videos", "YouTube"),
     "fmt": "h264", "audio": False, "preset": "", "geometry": "",
     "audio_fmt": "MP3", "audio_q": "320", "subs": False, "subs_langs": "es,en", "subs_mode": SUBS_MODES[0],
     "embed": False, "fps": FPS_CHOICES[0], "scale_preset": SCALE_PRESETS[0], "scale_custom": "1920x1080",
-    "scale_mode": next(iter(SCALE_MODES)),
+    "scale_mode": next(iter(SCALE_MODES)), "cookies": COOKIE_BROWSERS[0],
 }
 _YT_LINK = re.compile(r"^https?://(?:(?:www|m|music)\.)?(?:youtube\.com|youtu\.be)/\S+$", re.I)
 
@@ -585,6 +613,8 @@ def load_settings(state: dict | None = None) -> dict:
         s["scale_preset"] = SCALE_PRESETS[0]
     if s["scale_mode"] not in SCALE_MODES:
         s["scale_mode"] = next(iter(SCALE_MODES))
+    if s["cookies"] not in COOKIE_BROWSERS:
+        s["cookies"] = COOKIE_BROWSERS[0]
     return s
 
 
@@ -679,8 +709,8 @@ class App(tk.Tk):
         self.ui = max(self.winfo_fpixels("1i") / 96, 1.0)  # factor de escala por DPI
         self.thumb_w, self.thumb_h = self.px(THUMB_W), self.px(THUMB_H)
         self.title("Descargador de YouTube")
-        self.geometry(f"{self.px(1060)}x{self.px(700)}")
-        self.minsize(self.px(1000), self.px(680))
+        self.geometry(f"{self.px(1060)}x{self.px(740)}")
+        self.minsize(self.px(1000), self.px(700))
         self.configure(bg=BG)
         try:
             self.iconbitmap(os.path.join(_RES_DIR, "icon.ico"))
@@ -695,6 +725,9 @@ class App(tk.Tk):
         self.analyzed_at = 0.0
         self.analyzed_duration = None
         self.pending_heights = None  # resoluciones pedidas por un preset (se aplican al analizar)
+        self.queue_items = []  # cola de descargas: ítems {url, spec, ...}
+        self._running_queue = False
+        self.paused = False
         self.playlist_choice = None  # "video" | "list" | None (el enlace no era ambiguo)
         self.tracker = None
         self.skipped = []
@@ -706,6 +739,7 @@ class App(tk.Tk):
         self.thumb_img = None
         register_gpu_formats(cached_gpu())  # opciones GPU ya comprobadas en un arranque anterior (sin ejecutar ffmpeg)
         self.settings = load_settings()
+        self.cookie_browser = self.settings["cookies"]  # copia para los hilos (no leer variables tk fuera del hilo UI)
         self.last_error = ""
         self.out_dir = tk.StringVar(value=self.settings["out_dir"])
         self._restore_geometry()
@@ -725,7 +759,7 @@ class App(tk.Tk):
         if not m:
             return
         w = min(max(int(m[1]), self.px(1000)), self.winfo_screenwidth())
-        h = min(max(int(m[2]), self.px(680)), self.winfo_screenheight())
+        h = min(max(int(m[2]), self.px(700)), self.winfo_screenheight())
         self.geometry(f"{w}x{h}")
 
     def _save_settings(self) -> None:
@@ -772,7 +806,7 @@ class App(tk.Tk):
         s.configure("Dark.TNotebook", background=PANEL, borderwidth=0, tabmargins=(0, 0, 0, 6), bordercolor=PANEL,
                     lightcolor=PANEL, darkcolor=PANEL)
         s.configure("Dark.TNotebook.Tab", lightcolor=FIELD, bordercolor=FIELD)
-        s.configure("Dark.TNotebook.Tab", background=FIELD, foreground=CORAL_SOFT, padding=(14, 6), borderwidth=0,
+        s.configure("Dark.TNotebook.Tab", background=FIELD, foreground=CORAL_SOFT, padding=(11, 6), borderwidth=0,
                     font=(FONT, 10, "bold"))
         s.map("Dark.TNotebook.Tab", background=[("selected", CORAL_DIM)], foreground=[("selected", "white")])
         s.configure("TCombobox", fieldbackground=FIELD, background=FIELD, foreground=CORAL, arrowcolor=CORAL,
@@ -954,8 +988,9 @@ class App(tk.Tk):
         self.tabs = ttk.Notebook(inner, style="Dark.TNotebook")
         self.tabs.pack(fill="both", expand=True)
         tab_video = self._tab("Video")
-        tab_scale = self._tab("Escala y corte")
+        tab_scale = self._tab("Escala/corte")
         tab_extra = self._tab("Extras")
+        tab_queue = self._tab("Cola")
 
         # --- Pestaña Video ---
         self._label(tab_video, "RESOLUCIONES", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
@@ -990,7 +1025,8 @@ class App(tk.Tk):
             "embed": tk.BooleanVar(value=s["embed"]), "fps": tk.StringVar(value=s["fps"]),
             "scale_preset": tk.StringVar(value=s["scale_preset"]),
             "scale_custom": tk.StringVar(value=s["scale_custom"]),
-            "scale_mode": tk.StringVar(value=s["scale_mode"]), "trim_start": tk.StringVar(),
+            "scale_mode": tk.StringVar(value=s["scale_mode"]), "cookies": tk.StringVar(value=s["cookies"]),
+            "trim_start": tk.StringVar(),
             "trim_end": tk.StringVar(), "trim_exact": tk.BooleanVar(value=False),
         }
         self.audio_var = self.v["audio"]
@@ -1068,6 +1104,30 @@ class App(tk.Tk):
         self._label(tab_extra, "Solo MP4, MP3 y M4A (en MOV, Opus, WAV y FLAC se ignora la miniatura).", 8, False,
                     MUTED, PANEL, wraplength=self.px(380), justify="left").pack(anchor="w")
 
+        tk.Frame(tab_extra, bg=CORAL_DIM, height=1).pack(fill="x", pady=8)
+        crow = tk.Frame(tab_extra, bg=PANEL)
+        crow.pack(fill="x")
+        self._label(crow, "COOKIES DEL NAVEGADOR", 9, True, CORAL_SOFT, PANEL).pack(side="left")
+        ttk.Combobox(crow, textvariable=self.v["cookies"], values=COOKIE_BROWSERS, state="readonly", width=10,
+                     font=(FONT, 10)).pack(side="left", padx=10)
+        self.v["cookies"].trace_add("write", lambda *_: setattr(self, "cookie_browser", self.v["cookies"].get()))
+        self._label(tab_extra, "Si YouTube pide iniciar sesión. Firefox suele ser lo más fiable; en Chrome/Edge "
+                    "recientes puede fallar la lectura.", 8, False, MUTED, PANEL, wraplength=self.px(380),
+                    justify="left").pack(anchor="w", pady=(4, 0))
+
+        # --- Cola ---
+        self._label(tab_queue, "COLA DE DESCARGAS", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
+        self._label(tab_queue, "Configura un video y pulsa «+ Cola». DESCARGAR procesa toda la cola.", 8, False, MUTED,
+                    PANEL, wraplength=self.px(380), justify="left").pack(anchor="w", pady=(2, 6))
+        qrow = tk.Frame(tab_queue, bg=PANEL)
+        qrow.pack(side="bottom", fill="x", pady=(6, 0))
+        self._btn(qrow, "Quitar seleccionado", self._queue_remove).pack(side="left")
+        self._btn(qrow, "Vaciar", self._queue_clear).pack(side="left", padx=6)
+        self.queue_list = tk.Listbox(tab_queue, bg=FIELD, fg=CORAL, selectbackground=CORAL_DIM,
+                                     selectforeground="white", relief="flat", highlightthickness=0,
+                                     font=(FONT, 9), activestyle="none", selectmode="extended")
+        self.queue_list.pack(fill="both", expand=True)
+
         # ----- Panel derecho: preview -----
         right = tk.Frame(body, bg=PANEL)
         right.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
@@ -1082,6 +1142,12 @@ class App(tk.Tk):
                                 activebackground=CORAL_SOFT, activeforeground=BG,
                                 disabledforeground="#6b4757", pady=12, state="disabled")
         self.btn_dl.pack(side="left", fill="x", expand=True)
+        self.btn_queue = self._btn(acts, "+ Cola", self._add_to_queue)
+        self.btn_queue.config(state="disabled", pady=14)
+        self.btn_queue.pack(side="left", padx=(8, 0))
+        self.btn_pause = self._btn(acts, "Pausar", self._toggle_pause)
+        self.btn_pause.config(state="disabled", pady=14)
+        self.btn_pause.pack(side="left", padx=(8, 0))
         self.btn_cancel = self._btn(acts, "Cancelar", self._cancel)
         self.btn_cancel.config(state="disabled", pady=14)
         self.btn_cancel.pack(side="left", padx=(8, 0))
@@ -1200,6 +1266,13 @@ class App(tk.Tk):
         self.btn_dl.config(state="normal" if enabled else "disabled")
         self._update_dl_style()
 
+    def _refresh_dl(self):
+        """DESCARGAR: activo si no hay trabajo en curso y hay algo que descargar (URL analizada o cola)."""
+        n = len(self.queue_items)
+        self.btn_dl.config(text=f"⬇   DESCARGAR COLA ({n})" if n else "⬇   DESCARGAR")
+        self._set_dl(not self.busy and (n > 0 or self._url_matches()))
+        self.btn_queue.config(state="normal" if (not self.busy and self._url_matches()) else "disabled")
+
     def _browse(self):
         d = filedialog.askdirectory(initialdir=self.out_dir.get())
         if d:
@@ -1250,11 +1323,10 @@ class App(tk.Tk):
         """Si se edita la URL después de analizar, DESCARGAR queda bloqueado hasta volver a analizar."""
         if self.analyzed_url is None or self.busy:
             return
-        if self._url_matches():
-            self._set_dl(True)
-        else:
-            self._set_dl(False)
-            self.status.set("La URL cambió. Vuelve a pulsar Analizar.")
+        if not self._url_matches():
+            self.status.set("La URL cambió. Vuelve a pulsar Analizar." + (
+                "  (DESCARGAR procesará la cola.)" if self.queue_items else ""))
+        self._refresh_dl()
 
     def _ask_playlist_choice(self):
         """¿Solo este video o toda la lista? Devuelve "video", "list" o None (cancelar)."""
@@ -1292,6 +1364,8 @@ class App(tk.Tk):
 
     def _ydl_base(self) -> dict:
         opts = {"quiet": True, "noprogress": True, "logger": self.ytlog}
+        if self.cookie_browser != COOKIE_BROWSERS[0]:
+            opts["cookiesfrombrowser"] = (self.cookie_browser.lower(),)
         if self.js_runtimes:
             opts["js_runtimes"] = self.js_runtimes
         return opts
@@ -1341,7 +1415,7 @@ class App(tk.Tk):
         except Exception as e:  # noqa: BLE001
             log.exception("Error al analizar %s", url)
             self.last_error = f"Al analizar {url}\n{traceback.format_exc()}"
-            self.q.put(("error", str(e)))
+            self.q.put(("error", friendly_error(str(e), self.cookie_browser)))
 
     def _apply_info(self, url, choice, info, is_pl, heights, data, fps):
         self.is_playlist = is_pl
@@ -1411,34 +1485,98 @@ class App(tk.Tk):
             "embed": bool(v["embed"]),
         }
 
-    def download(self):
-        if self.busy:
-            return
+    def _current_item(self):
+        """Ítem de descarga con lo configurado ahora, o None (avisando al usuario) si no se puede."""
         if not self._url_matches():
             self.status.set("La URL cambió. Vuelve a pulsar Analizar.")
-            self._set_dl(False)
-            return
+            self._refresh_dl()
+            return None
         try:
             spec = self._collect_spec()
         except ValueError as e:
             messagebox.showwarning("Revisa las opciones", str(e))
-            return
+            return None
         if not spec["heights"] and not spec["audio"]:
             messagebox.showwarning("Nada seleccionado", "Marca al menos una resolución o el audio.")
-            return
+            return None
         os.makedirs(spec["out_dir"], exist_ok=True)
-        item = {"url": self.analyzed_url, "is_playlist": self.is_playlist, "info": self.analyzed_info,
+        return {"url": self.analyzed_url, "is_playlist": self.is_playlist, "info": self.analyzed_info,
                 "analyzed_at": self.analyzed_at, "title": self.title_lbl.cget("text"), "spec": spec}
-        self._start_download([item])
 
-    def _start_download(self, items):
+    def download(self):
+        if self.busy:
+            return
+        if self.queue_items:  # con cola, DESCARGAR procesa la cola
+            self._start_download(list(self.queue_items), from_queue=True)
+            return
+        item = self._current_item()
+        if item:
+            self._start_download([item])
+
+    # ---------- Cola ----------
+    @staticmethod
+    def _queue_text(it):
+        sp = it["spec"]
+        what = [f"{h}p" for h in sp["heights"]] + ([sp["audio_fmt"]] if sp["audio"] else [])
+        return f"{short_title(it['title'], 34)} · {', '.join(what)} · {sp['kind']}"
+
+    def _refresh_queue(self):
+        self.queue_list.delete(0, "end")
+        for it in self.queue_items:
+            self.queue_list.insert("end", self._queue_text(it))
+        self._refresh_dl()
+
+    def _add_to_queue(self):
+        if self.busy:
+            return
+        item = self._current_item()
+        if item:
+            self.queue_items.append(item)
+            self._refresh_queue()
+            self.status.set(f"Añadido a la cola ({len(self.queue_items)}). Puedes analizar otro enlace.")
+
+    def _queue_remove(self):
+        if self.busy:
+            return
+        for i in sorted(self.queue_list.curselection(), reverse=True):
+            del self.queue_items[i]
+        self._refresh_queue()
+
+    def _queue_clear(self):
+        if not self.busy:
+            self.queue_items.clear()
+            self._refresh_queue()
+
+    # ---------- Pausa ----------
+    def _toggle_pause(self):
+        if not self.busy:
+            return
+        self.paused = not self.paused
+        self.btn_pause.config(text="Reanudar" if self.paused else "Pausar")
+        if self.paused:
+            self.status.set("Pausando… (se detiene en cuanto llegue el siguiente bloque de datos)")
+
+    def _wait_if_paused(self):
+        if not self.paused:
+            return
+        self.q.put(("status", "⏸ Pausado: los archivos parciales se conservan. Pulsa Reanudar."))
+        while self.paused and not self.cancel:
+            time.sleep(0.2)
+        if self.cancel:
+            raise yt_dlp.utils.DownloadCancelled("Cancelado por el usuario")
+        self.q.put(("status", "Reanudando…"))
+
+    def _start_download(self, items, from_queue=False):
         self.busy = True
         self.cancel = False
+        self.paused = False
+        self._running_queue = from_queue
         self.last_error = ""
         self._show_result_buttons(False, False)
         self._save_settings()
-        self._set_dl(False)
+        self._refresh_dl()
         self.btn_an.config(state="disabled")
+        self.btn_pause.config(state="normal", text="Pausar")
         self.btn_cancel.config(state="normal")
         threading.Thread(target=self._download_worker, args=(items,), daemon=True).start()
 
@@ -1449,6 +1587,8 @@ class App(tk.Tk):
     def _hook(self, d):
         if self.cancel:
             raise yt_dlp.utils.DownloadCancelled("Cancelado por el usuario")
+        if self.paused:
+            raise DownloadPaused("Pausado")
         if self.tracker:
             pct, text = self.tracker.update(d)
             self.q.put(("progress", pct, text))
@@ -1647,6 +1787,15 @@ class App(tk.Tk):
         return match
 
     def _run_job(self, opts, url, info, analyzed_at, ext):
+        """Ejecuta un trabajo; si se pausa, espera y lo reanuda (yt-dlp continúa desde los .part)."""
+        while True:
+            try:
+                self._run_job_once(opts, url, info, analyzed_at, ext)
+                return
+            except DownloadPaused:
+                self._wait_if_paused()
+
+    def _run_job_once(self, opts, url, info, analyzed_at, ext):
         holder = {}
         opts = {**opts, "match_filter": self._make_skip_filter(holder, ext)}
         fresh = info is not None and (time.time() - analyzed_at) < INFO_MAX_AGE
@@ -1701,6 +1850,7 @@ class App(tk.Tk):
             for i, job in enumerate(jobs, 1):
                 if self.cancel:
                     raise yt_dlp.utils.DownloadCancelled("Cancelado por el usuario")
+                self._wait_if_paused()
                 self.cur_spec = job.spec
                 label = job.label if len(items) == 1 else f"{short_title(job.item.get('title'))} · {job.label}"
                 self.tracker.start_job(i, label)
@@ -1716,7 +1866,7 @@ class App(tk.Tk):
                         raise yt_dlp.utils.DownloadCancelled("Cancelado por el usuario") from None
                     log.exception("Falló el trabajo %s de %s", label, job.item["url"])
                     self.last_error = f"Trabajo {label} de {job.item['url']}\n{traceback.format_exc()}"
-                    failed.append(f"{label}: {str(e)[:120]}")
+                    failed.append(f"{label}: {friendly_error(str(e), self.cookie_browser)[:200]}")
             msg = "✔ Descarga completada en: " + ", ".join(outs)
             if self.skipped:
                 msg += "\nYa existían: " + ", ".join(self.skipped)
@@ -1728,7 +1878,7 @@ class App(tk.Tk):
         except Exception as e:  # noqa: BLE001
             log.exception("Error en la descarga")
             self.last_error = f"Descarga de {url}\n{traceback.format_exc()}"
-            self.q.put(("done", f"Error: {e}", False))
+            self.q.put(("done", f"Error: {friendly_error(str(e), self.cookie_browser)}", False))
         finally:
             self.tracker = None
 
@@ -1828,7 +1978,7 @@ class App(tk.Tk):
                     self._apply_info(*msg[1:])
                     self.busy = False
                     self.btn_an.config(state="normal")
-                    self._set_dl(self._url_matches())
+                    self._refresh_dl()
                 elif kind == "gpu":
                     self._apply_gpu(msg[1], msg[2])
                 elif kind == "engine":
@@ -1849,7 +1999,9 @@ class App(tk.Tk):
                 elif kind == "error":
                     self.busy = False
                     self.btn_an.config(state="normal")
+                    self._refresh_dl()
                     self.status.set("Error: " + msg[1][:300])
+                    self._show_result_buttons(False, True)
                 elif kind == "progress":
                     self.bar["value"] = msg[1]
                     self.status.set(msg[2])
@@ -1861,8 +2013,14 @@ class App(tk.Tk):
                     self.busy = False
                     self.bar["value"] = 0
                     self.btn_an.config(state="normal")
-                    self._set_dl(self._url_matches())
                     self.btn_cancel.config(state="disabled")
+                    self.btn_pause.config(state="disabled", text="Pausar")
+                    self.paused = False
+                    if self._running_queue and not self.cancel:  # cola terminada (aunque algo fallara): se vacía
+                        self.queue_items.clear()
+                        self._refresh_queue()
+                    self._running_queue = False
+                    self._refresh_dl()
                     self.status.set(msg[1])
                     self._show_result_buttons(msg[2], bool(self.last_error))
         except queue.Empty:
