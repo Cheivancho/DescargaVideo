@@ -1,6 +1,11 @@
 # Changelog
 
-## [2.0.0] — sin publicar (rama `mejoras-v2`, desde 1.2.0)
+## [2.0.1] — 2026-11-09
+
+### Cambiado
+- Rediseño visual: paleta unificada, pestañas nuevas y controles más parejos (ver «Cambiado (diseño)» más abajo).
+
+## [2.0.0] — 2026-11-09 (desde 1.2.0)
 
 ### Añadido
 
