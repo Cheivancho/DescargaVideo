@@ -294,7 +294,8 @@ class Downloader:
         jobs = []
         tag, trim = variant_tag(spec), trim_options(spec.get("trim"))
         for h in spec["heights"]:
-            opts = {**base, "post_hooks": [self._post_video], "format": build_format_selector(h, pl, spec.get("fps")),
+            sel = build_format_selector(h, pl, spec.get("fps"), bool(item.get("vertical")))
+            opts = {**base, "post_hooks": [self._post_video], "format": sel,
                     "merge_output_format": "mp4", "outtmpl": os.path.join(out, video_template(h, pl, tag))}
             opts.update(trim)
             opts.update(video_extras(spec, ext))

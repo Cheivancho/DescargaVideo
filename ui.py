@@ -52,6 +52,7 @@ from formats import (
     register_gpu_formats,
     resolve_scale,
     validate_trim,
+    video_tiers,
 )
 from util import fmt_date, fmt_dur, fmt_num, short_title
 
@@ -161,6 +162,7 @@ class App(tk.Tk):
         self.analyzed_info = None  # info de un video individual, reutilizable mientras no caduque
         self.analyzed_at = 0.0
         self.analyzed_duration = None
+        self.analyzed_vertical = False  # ¿el video analizado es vertical (9:16)?
         self.pending_heights = None  # resoluciones pedidas por un preset (se aplican al analizar)
         self.queue_items = []  # cola de descargas: ítems {url, spec, ...}
         self._running_queue = False
@@ -828,15 +830,14 @@ class App(tk.Tk):
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
             is_pl = info.get("_type") == "playlist"
+            vertical = False
             if is_pl:
                 heights = PLAYLIST_HEIGHTS
                 entries = [e for e in (info.get("entries") or []) if e]
                 thumb_url = info.get("thumbnail") or next(
                     (t["url"] for e in entries for t in (e.get("thumbnails") or [])[-1:]), None)
             else:
-                heights = sorted(
-                    {f["height"] for f in info.get("formats", [])
-                     if f.get("vcodec") not in (None, "none") and f.get("height")}, reverse=True)
+                heights, vertical = video_tiers(info.get("formats", []))
                 thumb_url = info.get("thumbnail")
             data = None
             if thumb_url:
@@ -846,14 +847,15 @@ class App(tk.Tk):
                 except Exception:  # noqa: BLE001
                     data = None
             fps = max((f.get("fps") or 0 for f in info.get("formats", []) or []), default=0)
-            self.q.put(("analyzed", url, choice, info, is_pl, heights, data, fps))
+            self.q.put(("analyzed", url, choice, info, is_pl, heights, data, fps, vertical))
         except Exception as e:  # noqa: BLE001
             log.exception("Error al analizar %s", url)
             self.dl.last_error = f"Al analizar {url}\n{traceback.format_exc()}"
             self.q.put(("error", friendly_error(str(e), self.dl.cookie_browser)))
 
-    def _apply_info(self, url, choice, info, is_pl, heights, data, fps):
+    def _apply_info(self, url, choice, info, is_pl, heights, data, fps, vertical=False):
         self.is_playlist = is_pl
+        self.analyzed_vertical = vertical
         self.analyzed_url = url
         self.playlist_choice = choice
         self.analyzed_info = None if is_pl else info
@@ -869,7 +871,8 @@ class App(tk.Tk):
             self.dur_badge.place_forget()
         else:
             self.chan_lbl.config(text=info.get("uploader") or info.get("channel") or "")
-            best = f"{max(heights)}p" + (f" · {int(fps)}fps" if fps else "") if heights else "—"
+            best = f"{max(heights)}p" + (" vertical" if vertical else "") + (f" · {int(fps)}fps" if fps else "") \
+                if heights else "—"
             vals = {"Duración": fmt_dur(info.get("duration")), "Vistas": fmt_num(info.get("view_count")),
                     "Publicado": fmt_date(info.get("upload_date")), "Mejor calidad": best,
                     "Resoluciones": str(len(heights)), "Likes": fmt_num(info.get("like_count"))}
@@ -883,14 +886,15 @@ class App(tk.Tk):
         if is_pl:
             self.status.set("Playlist: se usará la mejor calidad hasta la resolución elegida.")
         else:
-            self.status.set(hint or f"{len(heights)} resoluciones disponibles. Elige y descarga.")
+            tipo = " (video vertical 9:16)" if vertical else ""
+            self.status.set(hint or f"{len(heights)} resoluciones disponibles{tipo}. Elige y descarga.")
 
     def _set_thumbnail(self, data):
-        """Muestra la miniatura recortada a 16:9; si no hay o falla, vuelve al marcador."""
+        """Muestra la miniatura entera (con barras si es vertical); si no hay o falla, vuelve al marcador."""
         try:
             if not data:
                 raise ValueError("sin miniatura")
-            img = ImageOps.fit(Image.open(io.BytesIO(data)).convert("RGB"), (self.thumb_w, self.thumb_h))
+            img = ImageOps.pad(Image.open(io.BytesIO(data)).convert("RGB"), (self.thumb_w, self.thumb_h), color=FIELD)
             self.thumb_img = ImageTk.PhotoImage(img)
             self.thumb.config(image=self.thumb_img, text="", width=self.thumb_w, height=self.thumb_h)
         except Exception:  # noqa: BLE001
@@ -941,7 +945,8 @@ class App(tk.Tk):
                                  f"No se puede usar la carpeta de destino:\n{spec['out_dir']}\n\n{e}")
             return None
         return {"url": self.analyzed_url, "is_playlist": self.is_playlist, "info": self.analyzed_info,
-                "analyzed_at": self.analyzed_at, "title": self.title_lbl.cget("text"), "spec": spec}
+                "analyzed_at": self.analyzed_at, "vertical": self.analyzed_vertical,
+                "title": self.title_lbl.cget("text"), "spec": spec}
 
     def download(self) -> None:
         if self.busy:

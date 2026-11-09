@@ -100,14 +100,33 @@ def parse_langs(text: str) -> list[str]:
     return langs or ["es", "en"]
 
 
-def build_format_selector(height: int, is_playlist: bool = False, fps: int | None = None) -> str:
-    """Selector de formato de yt-dlp: prefiere H.264 + AAC y cae a lo que haya. 'fps' limita los cuadros por segundo."""
+def video_tiers(formats: list[dict]) -> tuple[list[int], bool]:
+    """(calidades disponibles de mayor a menor, ¿el video es vertical?).
+
+    La calidad es el lado CORTO del cuadro, como la nombra YouTube: un Short de 1080x1920 es «1080p», no «1920p».
+    En videos horizontales coincide con la altura de siempre.
+    """
+    sized = [f for f in formats if f.get("vcodec") not in (None, "none") and f.get("height")]
+    if not sized:
+        return [], False
+    tiers = {min(f["height"], f.get("width") or f["height"]) for f in sized}
+    biggest = max(sized, key=lambda f: max(f["height"], f.get("width") or 0))
+    return sorted(tiers, reverse=True), biggest["height"] > (biggest.get("width") or biggest["height"])
+
+
+def build_format_selector(height: int, is_playlist: bool = False, fps: int | None = None,
+                          vertical: bool = False) -> str:
+    """Selector de formato de yt-dlp: prefiere H.264 + AAC y cae a lo que haya. 'fps' limita los cuadros por segundo.
+
+    'height' es la calidad (lado corto). En un video vertical el lado corto es el ANCHO, así que se filtra por width.
+    """
     f = f"[fps<=?{int(fps)}]" if fps else ""
     if is_playlist:  # en listas: la mejor calidad HASTA la altura elegida
         return (f"bestvideo[height<={height}]{f}[vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
                 f"bestvideo[height<={height}]{f}+bestaudio/best[height<={height}]{f}/best")
-    return (f"bestvideo[height={height}]{f}[vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
-            f"bestvideo[height={height}]{f}+bestaudio/best[height={height}]{f}")
+    d = "width" if vertical else "height"
+    return (f"bestvideo[{d}={height}]{f}[vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
+            f"bestvideo[{d}={height}]{f}+bestaudio/best[{d}={height}]{f}")
 
 
 def video_template(height: int, is_playlist: bool, tag: str = "") -> str:
@@ -161,7 +180,8 @@ def audio_extras(spec: dict) -> dict:
     return opts
 
 
-SCALE_PRESETS = ["Sin cambios", "1920x1080", "3840x2160", "1280x720", "Personalizada"]
+SCALE_PRESETS = ["Sin cambios", "1920x1080", "3840x2160", "1280x720", "1080x1920", "2160x3840", "720x1280",
+                 "Personalizada"]  # los tres últimos son verticales (9:16)
 SCALE_MODES = {"Ajustar con barras": "fit", "Rellenar recortando": "fill", "Estirar": "stretch"}
 FPS_CHOICES = ["Máximo", "30", "60"]
 

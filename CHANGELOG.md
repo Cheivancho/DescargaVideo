@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.2] — sin publicar
+
+### Corregido
+- Videos verticales (Shorts, 9:16): la calidad se cuenta por el lado corto, como YouTube. Un Short de 1080x1920 aparece como «1080p» (antes «1920p») y al elegir «1080p» —también con los presets— baja el 1080x1920 en H.264 en vez de una versión de 608x1080 en AV1.
+- La miniatura de un video vertical se muestra entera, con barras, en lugar de recortarse.
+
+### Añadido
+- Escalas verticales para pantallas en retrato: 1080x1920, 2160x3840 y 720x1280.
+- El estado y «Mejor calidad» indican cuando el video es vertical.
+- Android: el mismo arreglo de calidad vertical (probado con un Short real).
+
 ## [2.0.1] — 2026-11-09
 
 ### Cambiado

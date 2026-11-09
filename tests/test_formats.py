@@ -228,3 +228,46 @@ def test_audio_extras_miniatura_y_metadatos(fmt, miniatura, metadatos):
     assert o.get("writethumbnail", False) is miniatura
     assert ("FFmpegMetadata" in claves) is metadatos
     assert "EmbedThumbnail" not in claves  # la carátula la incrusta la app (EmbedThumbnail exigiría ffprobe)
+
+
+# ---------------------------------------------------------------- video vertical
+SHORT = [  # formatos reales de un Short de YouTube (ancho, alto)
+    {"vcodec": "avc1", "width": 1080, "height": 1920}, {"vcodec": "av01", "width": 608, "height": 1080},
+    {"vcodec": "vp9", "width": 720, "height": 1280}, {"vcodec": "avc1", "width": 480, "height": 854},
+    {"vcodec": "none", "width": None, "height": None},  # solo audio: se ignora
+]
+
+
+def test_video_tiers_vertical_usa_el_lado_corto():
+    from formats import video_tiers
+    tiers, vertical = video_tiers(SHORT)
+    assert vertical is True
+    assert tiers == [1080, 720, 608, 480]  # «1080p vertical», no «1920p»
+
+
+def test_video_tiers_horizontal_no_cambia():
+    from formats import video_tiers
+    land = [{"vcodec": "avc1", "width": 1920, "height": 1080}, {"vcodec": "vp9", "width": 1280, "height": 720}]
+    assert video_tiers(land) == ([1080, 720], False)
+
+
+def test_video_tiers_sin_ancho_o_sin_video():
+    from formats import video_tiers
+    assert video_tiers([{"vcodec": "avc1", "height": 480}]) == ([480], False)  # sin ancho: como siempre
+    assert video_tiers([{"vcodec": "none"}]) == ([], False)
+    assert video_tiers([]) == ([], False)
+
+
+def test_selector_vertical_filtra_por_ancho():
+    s = build_format_selector(1080, vertical=True)
+    assert "[width=1080]" in s and "height=" not in s
+    assert "[height=1080]" in build_format_selector(1080) and "width" not in build_format_selector(1080)
+
+
+def test_escalas_verticales_se_aceptan():
+    from formats import SCALE_PRESETS, resolve_scale
+    assert {"1080x1920", "2160x3840", "720x1280"} <= set(SCALE_PRESETS)
+    scale, notes = resolve_scale("1080x1920", "", "Ajustar con barras", "h264")
+    assert (scale["w"], scale["h"]) == (1080, 1920) and notes == []
+    scale, notes = resolve_scale("720x1280", "", "Ajustar con barras", "hap")  # HAP: múltiplos de 4
+    assert (scale["w"], scale["h"]) == (720, 1280)

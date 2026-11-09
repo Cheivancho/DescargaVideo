@@ -234,7 +234,10 @@ private fun VideoCard(vm: MainViewModel, meta: VideoMeta) {
         Text(meta.title, color = TextMain, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 3,
             overflow = TextOverflow.Ellipsis)
         Text(
-            listOfNotNull(meta.channel.takeIf { it.isNotBlank() }, fmtDuration(meta.durationSec)).joinToString("  ·  "),
+            listOfNotNull(
+                meta.channel.takeIf { it.isNotBlank() }, fmtDuration(meta.durationSec),
+                "vertical".takeIf { meta.vertical },
+            ).joinToString("  ·  "),
             color = Muted, fontSize = 13.sp,
         )
         Spacer(Modifier.height(14.dp))
@@ -252,7 +255,7 @@ private fun VideoCard(vm: MainViewModel, meta: VideoMeta) {
                 Chip("M4A", vm.audioFmt == "m4a") { vm.chooseAudioFmt("m4a") }
             }
         } else {
-            Section("RESOLUCIÓN")
+            Section(if (meta.vertical) "RESOLUCIÓN (VIDEO VERTICAL)" else "RESOLUCIÓN")
             Spacer(Modifier.height(6.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 meta.heights.forEach { h -> Chip(heightLabel(h), vm.height == h) { vm.chooseHeight(h) } }
@@ -271,7 +274,8 @@ private fun JobCard(job: Job, ctx: Context) {
     Card {
         Text(job.meta.title, color = TextMain, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 2,
             overflow = TextOverflow.Ellipsis)
-        val what = if (job.audioOnly) "Audio ${job.audioFmt.uppercase()}" else "${job.height}p · MP4"
+        val what = if (job.audioOnly) "Audio ${job.audioFmt.uppercase()}" else
+            "${job.height}p${if (job.meta.vertical) " vertical" else ""} · MP4"
         Text(what, color = Muted, fontSize = 12.sp)
         if (job.status == Status.RUNNING || job.status == Status.WAITING) {
             Spacer(Modifier.height(8.dp))

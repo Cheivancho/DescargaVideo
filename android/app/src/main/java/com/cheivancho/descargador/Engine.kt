@@ -21,7 +21,8 @@ data class VideoMeta(
     val channel: String,
     val durationSec: Int,
     val thumbnail: String?,
-    val heights: List<Int>,
+    val heights: List<Int>, // calidades (lado corto del cuadro: un Short de 1080x1920 es «1080p»)
+    val vertical: Boolean = false,
 )
 
 /** Application: arranca el motor (yt-dlp + Python + ffmpeg) en segundo plano. */
@@ -114,9 +115,12 @@ object Engine {
         val req = YoutubeDLRequest(url)
         req.addOption("--no-playlist")
         val info = YoutubeDL.getInfo(req)
-        val heights = info.formats.orEmpty()
-            .filter { (it.vcodec ?: "none") != "none" && it.height > 0 }
-            .map { it.height }.distinct().sortedDescending()
+        val videos = info.formats.orEmpty().filter { (it.vcodec ?: "none") != "none" && it.height > 0 }
+        // La calidad es el lado corto, como la nombra YouTube; en horizontales coincide con la altura de siempre.
+        val heights = videos.map { if (it.width > 0) minOf(it.width, it.height) else it.height }
+            .distinct().sortedDescending()
+        val biggest = videos.maxByOrNull { maxOf(it.width, it.height) }
+        val vertical = biggest != null && biggest.width > 0 && biggest.height > biggest.width
         VideoMeta(
             url = url,
             title = info.title ?: info.fulltitle ?: "Sin título",
@@ -124,6 +128,7 @@ object Engine {
             durationSec = info.duration,
             thumbnail = info.thumbnail,
             heights = heights,
+            vertical = vertical,
         )
     }
 }

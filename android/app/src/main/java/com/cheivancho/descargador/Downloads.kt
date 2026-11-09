@@ -143,11 +143,13 @@ object Downloads {
             req.addOption("--audio-quality", "0")
         } else {
             val h = job.height
+            // En un video vertical el lado corto es el ANCHO: se filtra por width.
+            val d = if (job.meta.vertical) "width" else "height"
             // Prefiere H.264 + AAC (se reproduce en cualquier celular); si no hay, lo mejor disponible.
             req.addOption(
                 "-f",
-                "bv*[height<=$h][vcodec^=avc1]+ba[acodec^=mp4a]/bv*[height<=$h][ext=mp4]+ba[ext=m4a]/" +
-                    "bv*[height<=$h]+ba/b[height<=$h]/b",
+                "bv*[$d<=$h][vcodec^=avc1]+ba[acodec^=mp4a]/bv*[$d<=$h][ext=mp4]+ba[ext=m4a]/" +
+                    "bv*[$d<=$h]+ba/b[$d<=$h]/b",
             )
             req.addOption("--merge-output-format", "mp4")
         }
