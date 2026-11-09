@@ -9,6 +9,7 @@ import copy
 import ctypes
 import glob
 import io
+import json
 import logging
 import logging.handlers
 import os
@@ -24,7 +25,7 @@ import traceback
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import updater
 
@@ -485,6 +486,62 @@ def load_settings(state: dict | None = None) -> dict:
     return s
 
 
+PRESETS_FILE = os.path.join(updater.DATA_DIR, "presets.json")
+PRESET_KEYS = ("fmt", "audio", "audio_fmt", "audio_q", "subs", "subs_langs", "subs_mode", "embed", "fps",
+               "scale_preset", "scale_custom", "scale_mode")
+FACTORY_PRESETS = {  # de solo lectura; el recorte nunca se guarda en un preset
+    "Resolume 1080p (HAP)": {"heights": [1080], "fmt": "hap", "scale_preset": "1920x1080",
+                             "scale_mode": "Ajustar con barras"},
+    "Premiere 1080p (ProRes 422)": {"heights": [1080], "fmt": "prores_std"},
+    "Web ligero 720p (H.264)": {"heights": [720], "fmt": "h264", "fps": "30"},
+    "Solo audio MP3 320": {"heights": [], "audio": True, "audio_fmt": "MP3", "audio_q": "320"},
+}
+
+
+def normalize_preset(raw: dict) -> dict:
+    """Preset válido y completo a partir de un dict posiblemente viejo, incompleto o con tipos erróneos."""
+    raw = raw if isinstance(raw, dict) else {}
+    s = load_settings({"settings": {k: raw[k] for k in PRESET_KEYS if k in raw}})
+    out = {k: s[k] for k in PRESET_KEYS}
+    h = raw.get("heights")
+    out["heights"] = sorted({x for x in h if isinstance(x, int) and not isinstance(x, bool) and 0 < x < 10000},
+                            reverse=True) if isinstance(h, list) else []
+    return out
+
+
+def load_presets() -> dict:
+    """Presets del usuario (presets.json). Un archivo ausente o corrupto equivale a no tener presets."""
+    try:
+        with open(PRESETS_FILE, encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:  # noqa: BLE001
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): normalize_preset(v) for k, v in raw.items() if isinstance(v, dict) and str(k).strip()}
+
+
+def save_presets(presets: dict) -> None:
+    os.makedirs(os.path.dirname(PRESETS_FILE), exist_ok=True)
+    tmp = PRESETS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(presets, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, PRESETS_FILE)
+
+
+def pick_heights(available: list[int], wanted: list[int]) -> list[int]:
+    """Resoluciones disponibles que mejor cubren las pedidas (la pedida, o la mayor menor que ella, o la menor)."""
+    chosen = set()
+    for w in wanted:
+        if w in available:
+            chosen.add(w)
+        else:
+            lower = [a for a in available if a <= w]
+            if lower or available:
+                chosen.add(max(lower) if lower else min(available))
+    return sorted(chosen, reverse=True)
+
+
 def youtube_link(text: str) -> str | None:
     """Primer enlace de YouTube del texto (p. ej. del portapapeles), o None."""
     text = (text or "").strip()
@@ -535,6 +592,7 @@ class App(tk.Tk):
         self.analyzed_info = None  # info de un video individual, reutilizable mientras no caduque
         self.analyzed_at = 0.0
         self.analyzed_duration = None
+        self.pending_heights = None  # resoluciones pedidas por un preset (se aplican al analizar)
         self.playlist_choice = None  # "video" | "list" | None (el enlace no era ambiguo)
         self.tracker = None
         self.skipped = []
@@ -569,6 +627,7 @@ class App(tk.Tk):
     def _save_settings(self) -> None:
         self.settings.update({k: var.get() for k, var in self.v.items() if k in DEFAULT_SETTINGS})
         self.settings.update(out_dir=self.out_dir.get(), fmt=OUT_FORMATS.get(self.fmt_var.get(), "h264"),
+                             preset=self.preset_var.get(),
                              geometry=f"{self.winfo_width()}x{self.winfo_height()}")
         updater.update_state(settings=self.settings)
 
@@ -643,6 +702,76 @@ class App(tk.Tk):
                               activeforeground=CORAL_SOFT, selectcolor=FIELD, font=(FONT, 10), bd=0,
                               highlightthickness=0, cursor="hand2", **kw)
 
+    # ---------- Presets ----------
+    def _preset_names(self):
+        return list(FACTORY_PRESETS) + [n for n in load_presets() if n not in FACTORY_PRESETS]
+
+    def _current_preset(self) -> dict:
+        p = {k: self.v[k].get() for k in PRESET_KEYS if k in self.v}
+        p["fmt"] = OUT_FORMATS[self.fmt_var.get()]
+        p["heights"] = [h for h, var in self.res_vars.items() if var.get()]
+        return normalize_preset(p)
+
+    def _apply_preset(self, name):
+        raw = FACTORY_PRESETS.get(name) or load_presets().get(name)
+        if raw is None:
+            return
+        p = normalize_preset(raw)
+        for k in PRESET_KEYS:
+            if k == "fmt":
+                self.fmt_var.set(next(lbl for lbl, key in OUT_FORMATS.items() if key == p["fmt"]))
+            else:
+                self.v[k].set(p[k])
+        self.pending_heights = p["heights"]
+        if self.res_vars:
+            sel = set(pick_heights(list(self.res_vars), p["heights"]))
+            for h, var in self.res_vars.items():
+                var.set(h in sel)
+            self._refresh_chips()
+        self.settings["preset"] = name
+        self.status.set(f"Preset «{name}» aplicado." + ("" if self.res_vars else " Analiza un enlace para elegir "
+                                                                                   "las resoluciones."))
+
+    def _save_preset(self):
+        name = simpledialog.askstring("Guardar preset", "Nombre del preset:", parent=self)
+        name = (name or "").strip()[:40]
+        if not name:
+            return
+        if name in FACTORY_PRESETS:
+            messagebox.showinfo("Preset de fábrica", "Ese nombre es de un preset de fábrica. Elige otro nombre.")
+            return
+        presets = load_presets()
+        presets[name] = self._current_preset()
+        try:
+            save_presets(presets)
+        except OSError as e:
+            messagebox.showerror("Presets", f"No se pudo guardar: {e}")
+            return
+        self.preset_box["values"] = self._preset_names()
+        self.preset_var.set(name)
+        self.settings["preset"] = name
+        self.status.set(f"Preset «{name}» guardado.")
+
+    def _delete_preset(self):
+        name = self.preset_var.get()
+        if not name:
+            return
+        if name in FACTORY_PRESETS:
+            messagebox.showinfo("Preset de fábrica", "Los presets de fábrica no se pueden borrar.")
+            return
+        if not messagebox.askyesno("Borrar preset", f"¿Borrar el preset «{name}»?"):
+            return
+        presets = load_presets()
+        presets.pop(name, None)
+        try:
+            save_presets(presets)
+        except OSError as e:
+            messagebox.showerror("Presets", f"No se pudo borrar: {e}")
+            return
+        self.preset_box["values"] = self._preset_names()
+        self.preset_var.set("")
+        self.settings["preset"] = ""
+
     def _sync_scale(self):
         custom = self.v["scale_preset"].get() == "Personalizada"
         self.scale_custom_entry.config(state="normal" if custom else "disabled")
@@ -705,6 +834,17 @@ class App(tk.Tk):
         dest.pack(fill="x")
         ttk.Entry(dest, textvariable=self.out_dir).pack(side="left", fill="x", expand=True)
         self._btn(dest, "…", self._browse).pack(side="left", padx=(8, 0))
+
+        prow = tk.Frame(inner, bg=PANEL)
+        prow.pack(side="top", fill="x", pady=(0, 8))
+        self._label(prow, "PRESET", 9, True, CORAL_SOFT, PANEL).pack(side="left")
+        self.preset_var = tk.StringVar(value=self.settings["preset"])
+        self.preset_box = ttk.Combobox(prow, textvariable=self.preset_var, state="readonly", font=(FONT, 10),
+                                       values=self._preset_names())
+        self.preset_box.pack(side="left", fill="x", expand=True, padx=8)
+        self.preset_box.bind("<<ComboboxSelected>>", lambda e: self._apply_preset(self.preset_var.get()))
+        self._btn(prow, "Guardar", self._save_preset).pack(side="left")
+        self._btn(prow, "Borrar", self._delete_preset).pack(side="left", padx=(6, 0))
 
         self.tabs = ttk.Notebook(inner, style="Dark.TNotebook")
         self.tabs.pack(fill="both", expand=True)
@@ -967,8 +1107,9 @@ class App(tk.Tk):
             self._label(self.res_frame, "No se encontraron resoluciones.\nRevisa el mensaje de estado.", 10, False,
                         MUTED, PANEL, justify="left").pack(anchor="w")
             return
+        sel = set(pick_heights(heights, self.pending_heights)) if self.pending_heights is not None else {heights[0]}
         for i, h in enumerate(heights):
-            var = tk.BooleanVar(value=(i == 0))
+            var = tk.BooleanVar(value=(h in sel))
             self.res_vars[h] = var
             label = f"{h}p"
             if h >= 4320:
