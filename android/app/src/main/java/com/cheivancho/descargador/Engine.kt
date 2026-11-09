@@ -23,6 +23,7 @@ data class VideoMeta(
     val thumbnail: String?,
     val heights: List<Int>, // calidades (lado corto del cuadro: un Short de 1080x1920 es «1080p»)
     val vertical: Boolean = false,
+    val dims: Map<Int, Pair<Int, Int>> = emptyMap(), // calidad -> (ancho, alto) reales, p. ej. 1080 -> 1080x1920
 )
 
 /** Application: arranca el motor (yt-dlp + Python + ffmpeg) en segundo plano. */
@@ -120,6 +121,13 @@ object Engine {
         val heights = videos.map { if (it.width > 0) minOf(it.width, it.height) else it.height }
             .distinct().sortedDescending()
         val biggest = videos.maxByOrNull { maxOf(it.width, it.height) }
+        val dims = HashMap<Int, Pair<Int, Int>>()
+        for (f in videos) {
+            val w = if (f.width > 0) f.width else f.height
+            val tier = minOf(w, f.height)
+            val old = dims[tier]
+            if (old == null || w * f.height > old.first * old.second) dims[tier] = w to f.height
+        }
         val vertical = biggest != null && biggest.width > 0 && biggest.height > biggest.width
         VideoMeta(
             url = url,
@@ -129,6 +137,7 @@ object Engine {
             thumbnail = info.thumbnail,
             heights = heights,
             vertical = vertical,
+            dims = dims,
         )
     }
 }

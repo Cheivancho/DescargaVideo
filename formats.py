@@ -114,6 +114,74 @@ def video_tiers(formats: list[dict]) -> tuple[list[int], bool]:
     return sorted(tiers, reverse=True), biggest["height"] > (biggest.get("width") or biggest["height"])
 
 
+ORIENTATIONS = {"Como el original": "auto", "Vertical": "vertical", "Horizontal": "horizontal"}
+_QUALITY_NAMES = ((4320, "8K"), (2160, "4K"), (1440, "2K"), (1080, "Full HD"), (720, "HD"))
+
+
+def quality_name(tier: int) -> str:
+    """Nombre corriente de una calidad: 1080 -> «Full HD», 2160 -> «4K»; '' si no tiene."""
+    return next((name for t, name in _QUALITY_NAMES if tier >= t), "")
+
+
+def video_dims(formats: list[dict]) -> dict[int, tuple[int, int]]:
+    """Calidad -> (ancho, alto) reales del mejor formato de esa calidad, para mostrar «1080×1920»."""
+    dims: dict[int, tuple[int, int]] = {}
+    for f in formats:
+        if f.get("vcodec") in (None, "none") or not f.get("height"):
+            continue
+        w, h = f.get("width") or f["height"], f["height"]
+        tier = min(w, h)
+        if tier not in dims or w * h > dims[tier][0] * dims[tier][1]:
+            dims[tier] = (w, h)
+    return dims
+
+
+def default_tier(tiers: list[int]) -> int | None:
+    """Calidad recomendada para quien no sabe elegir: la mejor hasta Full HD (1080p); si no hay, la más alta."""
+    if not tiers:
+        return None
+    return max((t for t in tiers if t <= 1080), default=max(tiers))
+
+
+def _ceil_to(n: float, step: int) -> int:
+    return -(-int(round(n)) // step) * step
+
+
+def orient_spec(spec: dict, tier: int, source_vertical: bool) -> dict:
+    """Spec de UN trabajo con la orientación de salida garantizada.
+
+    - «Como el original»: un video vertical sigue vertical y uno horizontal, horizontal. Si hay una escala elegida
+      con la orientación contraria (p. ej. el preset 1920x1080 con un Short), se da vuelta (1080x1920) para que no
+      salga un video horizontal con barras negras.
+    - «Vertical» / «Horizontal»: se fuerza esa orientación; si el original es de la otra, se adapta (con el «Modo»
+      elegido en Escala/corte: barras, recortar o estirar).
+    """
+    choice = spec.get("orientation", "auto")
+    want_v = source_vertical if choice == "auto" else choice == "vertical"
+    name = "vertical" if want_v else "horizontal"
+    out = dict(spec)
+    notes = list(spec.get("notes") or [])
+    step = 4 if spec.get("kind") in ("hap", "hapq") else 2
+    sc = spec.get("scale")
+    if sc:
+        w, h = sc["w"], sc["h"]
+        if w != h and (h > w) != want_v:
+            out["scale"] = {**sc, "w": h, "h": w}
+            notes.append(f"Salida {name}: la resolución {w}x{h} se aplicó como {h}x{w}.")
+    elif want_v != source_vertical and tier:
+        short, long_ = _ceil_to(tier, step), _ceil_to(tier * 16 / 9, step)
+        w, h = (short, long_) if want_v else (long_, short)
+        mode = spec.get("orient_mode") or "fit"
+        how = {"fit": "con barras negras", "fill": "recortando los bordes", "stretch": "estirando la imagen"}[mode]
+        out["scale"] = {"w": w, "h": h, "mode": mode}
+        notes.append(f"Se adaptó a {name} ({w}x{h}) {how}.")
+        if out.get("kind") == "original":
+            out["kind"] = "h264"
+            notes.append("Al cambiar la orientación, el formato «Original» se convierte a H.264.")
+    out["notes"] = notes
+    return out
+
+
 def build_format_selector(height: int, is_playlist: bool = False, fps: int | None = None,
                           vertical: bool = False) -> str:
     """Selector de formato de yt-dlp: prefiere H.264 + AAC y cae a lo que haya. 'fps' limita los cuadros por segundo.

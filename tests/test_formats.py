@@ -271,3 +271,85 @@ def test_escalas_verticales_se_aceptan():
     assert (scale["w"], scale["h"]) == (1080, 1920) and notes == []
     scale, notes = resolve_scale("720x1280", "", "Ajustar con barras", "hap")  # HAP: múltiplos de 4
     assert (scale["w"], scale["h"]) == (720, 1280)
+
+
+# ---------------------------------------------------------------- orientación de salida
+def _spec(**kw):
+    base = {"kind": "h264", "scale": None, "notes": [], "orientation": "auto", "orient_mode": "fit"}
+    base.update(kw)
+    return base
+
+
+def test_auto_video_vertical_sin_escala_no_cambia_nada():
+    from formats import orient_spec
+    out = orient_spec(_spec(), 1080, source_vertical=True)
+    assert out["scale"] is None and out["notes"] == []
+
+
+def test_auto_escala_horizontal_en_video_vertical_se_da_vuelta():
+    """El caso peligroso: el preset 1920x1080 con un Short NO debe dar un video horizontal con barras."""
+    from formats import orient_spec
+    out = orient_spec(_spec(scale={"w": 1920, "h": 1080, "mode": "fit"}), 1080, source_vertical=True)
+    assert (out["scale"]["w"], out["scale"]["h"]) == (1080, 1920)
+    assert out["notes"] and "1080x1920" in out["notes"][0]
+
+
+def test_auto_escala_vertical_en_video_horizontal_se_da_vuelta():
+    from formats import orient_spec
+    out = orient_spec(_spec(scale={"w": 1080, "h": 1920, "mode": "fill"}), 1080, source_vertical=False)
+    assert (out["scale"]["w"], out["scale"]["h"]) == (1920, 1080) and out["scale"]["mode"] == "fill"
+
+
+def test_escala_cuadrada_o_ya_correcta_no_se_toca():
+    from formats import orient_spec
+    sq = orient_spec(_spec(scale={"w": 1080, "h": 1080, "mode": "fit"}), 1080, source_vertical=True)
+    ok = orient_spec(_spec(scale={"w": 1080, "h": 1920, "mode": "fit"}), 1080, source_vertical=True)
+    assert (sq["scale"]["w"], sq["scale"]["h"]) == (1080, 1080) and sq["notes"] == []
+    assert (ok["scale"]["w"], ok["scale"]["h"]) == (1080, 1920) and ok["notes"] == []
+
+
+def test_forzar_vertical_en_video_horizontal_crea_la_escala():
+    from formats import orient_spec
+    out = orient_spec(_spec(orientation="vertical"), 1080, source_vertical=False)
+    assert (out["scale"]["w"], out["scale"]["h"]) == (1080, 1920) and out["scale"]["mode"] == "fit"
+    assert "vertical" in out["notes"][0] and "barras" in out["notes"][0]
+
+
+def test_forzar_horizontal_en_video_vertical_usa_el_modo_elegido():
+    from formats import orient_spec
+    out = orient_spec(_spec(orientation="horizontal", orient_mode="fill"), 720, source_vertical=True)
+    assert (out["scale"]["w"], out["scale"]["h"]) == (1280, 720) and out["scale"]["mode"] == "fill"
+
+
+def test_forzar_la_misma_orientacion_no_hace_nada():
+    from formats import orient_spec
+    assert orient_spec(_spec(orientation="vertical"), 1080, source_vertical=True)["scale"] is None
+
+
+def test_forzar_con_formato_original_pasa_a_h264_y_hap_usa_multiplos_de_4():
+    from formats import orient_spec
+    assert orient_spec(_spec(kind="original", orientation="vertical"), 1080, False)["kind"] == "h264"
+    hap = orient_spec(_spec(kind="hap", orientation="vertical"), 722, source_vertical=False)["scale"]
+    assert hap["w"] % 4 == 0 and hap["h"] % 4 == 0
+
+
+def test_orient_spec_no_modifica_el_original():
+    from formats import orient_spec
+    spec = _spec(scale={"w": 1920, "h": 1080, "mode": "fit"})
+    orient_spec(spec, 1080, source_vertical=True)
+    assert spec["scale"]["w"] == 1920 and spec["notes"] == []
+
+
+def test_default_tier_recomienda_hasta_full_hd():
+    from formats import default_tier
+    assert default_tier([2160, 1440, 1080, 720]) == 1080
+    assert default_tier([720, 480]) == 720
+    assert default_tier([2160, 1440]) == 2160  # sin nada hasta Full HD: la más alta
+    assert default_tier([]) is None
+
+
+def test_nombres_de_calidad_y_tamanos_reales():
+    from formats import quality_name, video_dims
+    assert [quality_name(t) for t in (2160, 1080, 720, 480)] == ["4K", "Full HD", "HD", ""]
+    assert video_dims(SHORT)[1080] == (1080, 1920)
+    assert video_dims(SHORT)[608] == (608, 1080)

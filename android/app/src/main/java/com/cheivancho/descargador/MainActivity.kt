@@ -240,6 +240,13 @@ private fun VideoCard(vm: MainViewModel, meta: VideoMeta) {
             ).joinToString("  ·  "),
             color = Muted, fontSize = 13.sp,
         )
+        Spacer(Modifier.height(8.dp))
+        // Aviso claro de la orientación, para que nadie tenga que entender de resoluciones.
+        Text(
+            if (meta.vertical) "Video VERTICAL (9:16, como un Short o Reel): se descargará vertical."
+            else "Video horizontal (16:9): se descargará horizontal.",
+            color = CoralSoft, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+        )
         Spacer(Modifier.height(14.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -255,10 +262,15 @@ private fun VideoCard(vm: MainViewModel, meta: VideoMeta) {
                 Chip("M4A", vm.audioFmt == "m4a") { vm.chooseAudioFmt("m4a") }
             }
         } else {
-            Section(if (meta.vertical) "RESOLUCIÓN (VIDEO VERTICAL)" else "RESOLUCIÓN")
+            Section("CALIDAD")
             Spacer(Modifier.height(6.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                meta.heights.forEach { h -> Chip(heightLabel(h), vm.height == h) { vm.chooseHeight(h) } }
+                meta.heights.forEach { h ->
+                    val d = meta.dims[h]
+                    Chip(heightLabel(h), vm.height == h, sub = d?.let { "${it.first}×${it.second}" }) {
+                        vm.chooseHeight(h)
+                    }
+                }
             }
         }
         Spacer(Modifier.height(16.dp))
@@ -394,7 +406,9 @@ private fun SoftButton(text: String, modifier: Modifier = Modifier, onClick: () 
 }
 
 @Composable
-private fun Chip(text: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+private fun Chip(
+    text: String, selected: Boolean, enabled: Boolean = true, sub: String? = null, onClick: () -> Unit,
+) {
     val shape = RoundedCornerShape(10.dp)
     Box(
         Modifier.clip(shape)
@@ -404,14 +418,15 @@ private fun Chip(text: String, selected: Boolean, enabled: Boolean = true, onCli
             .padding(horizontal = 16.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
-            color = when {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            val main = when {
                 !enabled -> Disabled
                 selected -> Color.White
                 else -> TextMain
-            },
-        )
+            }
+            Text(text, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = main)
+            if (sub != null) Text(sub, fontSize = 11.sp, color = if (selected) Color.White.copy(alpha = 0.85f) else Muted)
+        }
     }
 }
 
@@ -434,10 +449,13 @@ private fun Thumb(url: String?, modifier: Modifier) {
 
 // ---------------------------------------------------------------- utilidades
 
+/** Nombre corriente de la calidad: 1080 -> «1080p Full HD», 2160 -> «2160p 4K». */
 private fun heightLabel(h: Int): String = when {
     h >= 4320 -> "${h}p 8K"
     h >= 2160 -> "${h}p 4K"
-    h >= 1080 -> "${h}p HD"
+    h >= 1440 -> "${h}p 2K"
+    h >= 1080 -> "${h}p Full HD"
+    h >= 720 -> "${h}p HD"
     else -> "${h}p"
 }
 

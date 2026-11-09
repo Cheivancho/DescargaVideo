@@ -43,15 +43,19 @@ from formats import (
     COOKIE_BROWSERS,
     FPS_CHOICES,
     GPU_TABLE,
+    ORIENTATIONS,
     OUT_FORMATS,
     PLAYLIST_HEIGHTS,
     SCALE_MODES,
     SCALE_PRESETS,
     SUBS_MODES,
+    default_tier,
     parse_langs,
+    quality_name,
     register_gpu_formats,
     resolve_scale,
     validate_trim,
+    video_dims,
     video_tiers,
 )
 from util import fmt_date, fmt_dur, fmt_num, short_title
@@ -440,7 +444,24 @@ class App(tk.Tk):
                                     10, False, MUTED, PANEL, justify="left")
         self.res_hint.pack(anchor="w", pady=10)
 
-        tk.Frame(tab_video, bg=BORDER, height=1).pack(fill="x", pady=12)
+        tk.Frame(tab_video, bg=BORDER, height=1).pack(fill="x", pady=8)
+
+        self._label(tab_video, "ORIENTACIÓN DEL VIDEO", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
+        self.v_orient = tk.StringVar(value=self.settings["orientation"])
+        orow = tk.Frame(tab_video, bg=PANEL)
+        orow.pack(fill="x", pady=(6, 0))
+        self.orient_buttons = []
+        for olabel, okey in ORIENTATIONS.items():
+            ob = tk.Radiobutton(orow, text=olabel, value=okey, variable=self.v_orient, indicatoron=False,
+                                bg=FIELD, fg=TEXT, selectcolor=CORAL, activebackground=HOVER, activeforeground=TEXT,
+                                font=(FONT, 10, "bold"), relief="flat", bd=0, highlightthickness=0, cursor="hand2",
+                                pady=8, command=self._refresh_orient)
+            ob.pack(side="left", fill="x", expand=True, padx=(0, 6))
+            self.orient_buttons.append(ob)
+        self.orient_hint = self._label(tab_video, "", 9, False, MUTED, PANEL, wraplength=self.px(440), justify="left")
+        self.orient_hint.pack(anchor="w", pady=(6, 0))
+
+        tk.Frame(tab_video, bg=BORDER, height=1).pack(fill="x", pady=8)
 
         self._label(tab_video, "FORMATO DE SALIDA", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
         self.fmt_var = tk.StringVar(value=next((k for k, v in OUT_FORMATS.items() if v == self.settings["fmt"]),
@@ -461,20 +482,12 @@ class App(tk.Tk):
             "scale_preset": tk.StringVar(value=s["scale_preset"]),
             "scale_custom": tk.StringVar(value=s["scale_custom"]),
             "scale_mode": tk.StringVar(value=s["scale_mode"]), "cookies": tk.StringVar(value=s["cookies"]),
+            "orientation": self.v_orient,
             "trim_start": tk.StringVar(),
             "trim_end": tk.StringVar(), "trim_exact": tk.BooleanVar(value=False),
         }
         self.audio_var = self.v["audio"]
 
-        # --- Video: FPS ---
-        tk.Frame(tab_video, bg=BORDER, height=1).pack(fill="x", pady=12)
-        frow = tk.Frame(tab_video, bg=PANEL)
-        frow.pack(fill="x")
-        self._label(frow, "FPS MÁXIMOS", 9, True, CORAL_SOFT, PANEL).pack(side="left")
-        ttk.Combobox(frow, textvariable=self.v["fps"], values=FPS_CHOICES, state="readonly", width=9,
-                     font=(FONT, 10)).pack(side="left", padx=10)
-        self._label(tab_video, "Limita los cuadros por segundo (se elige un formato de 30 o 60 si existe).",
-                    9, False, MUTED, PANEL, wraplength=self.px(440), justify="left").pack(anchor="w", pady=(4, 0))
 
         # --- Escala y corte ---
         self._label(tab_scale, "RESOLUCIÓN EXACTA DE SALIDA", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
@@ -491,8 +504,12 @@ class App(tk.Tk):
                      font=(FONT, 10)).pack(side="left", padx=8)
         self.v["scale_preset"].trace_add("write", lambda *_: self._sync_scale())
         self._sync_scale()
-        self._label(tab_scale, "Re-codifica el video (con «Original» se usa H.264). HAP exige múltiplos de 4: "
-                    "se ajusta solo.", 9, False, MUTED, PANEL, wraplength=self.px(440), justify="left").pack(anchor="w")
+        self._label(
+            tab_scale,
+            "Re-codifica el video (con «Original» se usa H.264). La resolución se adapta sola a la "
+            "orientación del video (1920x1080 en un video vertical se aplica como 1080x1920). "
+            "HAP exige múltiplos de 4.",
+            9, False, MUTED, PANEL, wraplength=self.px(440), justify="left").pack(anchor="w")
 
         tk.Frame(tab_scale, bg=BORDER, height=1).pack(fill="x", pady=12)
         self._label(tab_scale, "RECORTAR TRAMO", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
@@ -506,6 +523,16 @@ class App(tk.Tk):
         self._label(tab_scale, "Formato mm:ss u hh:mm:ss. Vacío = sin recorte (Fin vacío = hasta el final). "
                     "El nombre del archivo indica el tramo.", 9, False, MUTED, PANEL, wraplength=self.px(440),
                     justify="left").pack(anchor="w")
+
+        # --- FPS máximos ---
+        tk.Frame(tab_scale, bg=BORDER, height=1).pack(fill="x", pady=12)
+        frow = tk.Frame(tab_scale, bg=PANEL)
+        frow.pack(fill="x")
+        self._label(frow, "FPS MÁXIMOS", 9, True, CORAL_SOFT, PANEL).pack(side="left")
+        ttk.Combobox(frow, textvariable=self.v["fps"], values=FPS_CHOICES, state="readonly", width=9,
+                     font=(FONT, 10)).pack(side="left", padx=10)
+        self._label(tab_scale, "Limita los cuadros por segundo (se elige un formato de 30 o 60 si existe).",
+                    9, False, MUTED, PANEL, wraplength=self.px(440), justify="left").pack(anchor="w", pady=(4, 0))
 
         self._label(tab_extra, "AUDIO", 9, True, CORAL_SOFT, PANEL).pack(anchor="w")
         self._check(tab_extra, "Descargar también solo audio", self.v["audio"]).pack(anchor="w", pady=(6, 2))
@@ -613,6 +640,8 @@ class App(tk.Tk):
         self.title_lbl.pack(anchor="w", pady=(8, 2), fill="x")
         self.chan_lbl = self._label(rin, "", 10, False, CORAL_SOFT, PANEL, anchor="w")
         self.chan_lbl.pack(fill="x")
+        self.orient_lbl = self._label(rin, "", 10, True, CORAL_SOFT, PANEL, anchor="w")
+        self.orient_lbl.pack(fill="x", pady=(2, 0))
 
         self.meta = {}
         grid = tk.Frame(rin, bg=PANEL)
@@ -726,7 +755,24 @@ class App(tk.Tk):
         for var in self.res_vars.values():
             var.set(v)
 
-    def _show_resolutions(self, heights, hint=None):
+    def _refresh_orient(self) -> None:
+        """Dice en palabras simples qué orientación tendrá el archivo descargado."""
+        choice = self.v_orient.get()
+        if self.analyzed_url is None or self.is_playlist:
+            self.orient_hint.config(
+                text="«Como el original» respeta el video: uno vertical se descarga vertical y uno horizontal, "
+                     "horizontal.", fg=MUTED)
+            return
+        src = "vertical" if self.analyzed_vertical else "horizontal"
+        want = src if choice == "auto" else choice
+        if want == src:
+            self.orient_hint.config(text=f"Este video es {src}: se descargará {src}.", fg=MUTED)
+        else:
+            self.orient_hint.config(
+                text=f"Este video es {src} y lo pediste {want}: se adaptará (barras, recorte o estirado según el "
+                     f"«Modo» de la pestaña Escala/corte).", fg=CORAL_SOFT)
+
+    def _show_resolutions(self, heights, hint=None, dims=None):
         for w in self.res_frame.winfo_children():
             w.destroy()
         self.res_vars = {}
@@ -734,22 +780,20 @@ class App(tk.Tk):
             self._label(self.res_frame, "No se encontraron resoluciones.\nRevisa el mensaje de estado.", 10, False,
                         MUTED, PANEL, justify="left").pack(anchor="w")
             return
-        sel = set(pick_heights(heights, self.pending_heights)) if self.pending_heights is not None else {heights[0]}
+        sel = set(pick_heights(heights, self.pending_heights)) if self.pending_heights is not None \
+            else {default_tier(heights)}
         self.pending_heights = None  # un preset solo afecta al análisis siguiente
         for i, h in enumerate(heights):
             var = tk.BooleanVar(value=(h in sel))
             self.res_vars[h] = var
-            label = f"{h}p"
-            if h >= 4320:
-                label += " 8K"
-            elif h >= 2160:
-                label += " 4K"
-            elif h >= 1080:
-                label += " HD"
+            name = quality_name(h)
+            label = f"{h}p" + (f" {name}" if name else "")
+            if dims and h in dims:
+                label += f"\n{dims[h][0]}×{dims[h][1]}"  # tamaño real, p. ej. 1080×1920
             tk.Checkbutton(self.res_frame, text=label, variable=var, indicatoron=False,
                            bg=FIELD, fg=TEXT, selectcolor=CORAL, activebackground=HOVER,
-                           activeforeground=TEXT, font=(FONT, 10, "bold"), relief="flat", bd=0,
-                           highlightthickness=0, cursor="hand2", width=9, pady=7,
+                           activeforeground=TEXT, font=(FONT, 9, "bold"), relief="flat", bd=0,
+                           highlightthickness=0, cursor="hand2", width=12, pady=4,
                            command=self._refresh_chips).grid(row=i // 3, column=i % 3, padx=4, pady=4, sticky="w")
         self._refresh_chips()
 
@@ -882,7 +926,10 @@ class App(tk.Tk):
             self.meta[k].config(text=v)
         self._set_thumbnail(data)
         hint = None if is_pl else diagnose_formats(heights, self.dl.ytlog.last_warning, bool(self.dl.js_runtimes))
-        self._show_resolutions(heights, hint)
+        self._show_resolutions(heights, hint, None if is_pl else video_dims(info.get("formats", [])))
+        self.orient_lbl.config(text="" if is_pl else (
+            "Video VERTICAL (9:16, como un Short o Reel)" if vertical else "Video horizontal (16:9)"))
+        self._refresh_orient()
         if is_pl:
             self.status.set("Playlist: se usará la mejor calidad hasta la resolución elegida.")
         else:
@@ -914,6 +961,7 @@ class App(tk.Tk):
         trim = validate_trim(v["trim_start"], v["trim_end"], self.analyzed_duration, v["trim_exact"])
         return {
             "scale": scale, "trim": trim, "notes": notes,
+            "orientation": v["orientation"], "orient_mode": SCALE_MODES.get(v["scale_mode"], "fit"),
             "fps": int(v["fps"]) if str(v["fps"]).isdigit() else None,
             "out_dir": self.out_dir.get(),
             "kind": kind,

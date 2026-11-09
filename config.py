@@ -13,6 +13,7 @@ from formats import (
     COOKIE_BROWSERS,
     FPS_CHOICES,
     GPU_TABLE,
+    ORIENTATIONS,
     OUT_FORMATS,
     SCALE_MODES,
     SCALE_PRESETS,
@@ -36,7 +37,7 @@ DEFAULT_SETTINGS = {
     "fmt": "h264", "audio": False, "preset": "", "geometry": "",
     "audio_fmt": "MP3", "audio_q": "320", "subs": False, "subs_langs": "es,en", "subs_mode": SUBS_MODES[0],
     "embed": False, "fps": FPS_CHOICES[0], "scale_preset": SCALE_PRESETS[0], "scale_custom": "1920x1080",
-    "scale_mode": next(iter(SCALE_MODES)), "cookies": COOKIE_BROWSERS[0],
+    "scale_mode": next(iter(SCALE_MODES)), "cookies": COOKIE_BROWSERS[0], "orientation": "auto",
 }
 
 
@@ -64,6 +65,8 @@ def load_settings(state: dict | None = None) -> dict:
         s["scale_preset"] = SCALE_PRESETS[0]
     if s["scale_mode"] not in SCALE_MODES:
         s["scale_mode"] = next(iter(SCALE_MODES))
+    if s["orientation"] not in ORIENTATIONS.values():
+        s["orientation"] = "auto"
     if s["cookies"] not in COOKIE_BROWSERS:
         s["cookies"] = COOKIE_BROWSERS[0]
     return s
@@ -71,7 +74,7 @@ def load_settings(state: dict | None = None) -> dict:
 
 PRESETS_FILE = os.path.join(updater.DATA_DIR, "presets.json")
 PRESET_KEYS = ("fmt", "audio", "audio_fmt", "audio_q", "subs", "subs_langs", "subs_mode", "embed", "fps",
-               "scale_preset", "scale_custom", "scale_mode")
+               "scale_preset", "scale_custom", "scale_mode", "orientation")
 FACTORY_PRESETS = {  # de solo lectura; el recorte nunca se guarda en un preset
     "Resolume 1080p (HAP)": {"heights": [1080], "fmt": "hap", "scale_preset": "1920x1080",
                              "scale_mode": "Ajustar con barras"},

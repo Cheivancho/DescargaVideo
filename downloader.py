@@ -20,6 +20,7 @@ from formats import (
     audio_template,
     build_format_selector,
     final_ext,
+    orient_spec,
     trim_options,
     variant_tag,
     video_extras,
@@ -288,18 +289,19 @@ class Downloader:
     def build_jobs(self, item: dict) -> list[Job]:
         """Convierte un ítem (URL + spec) en trabajos de yt-dlp: uno por resolución y uno de audio."""
         spec, pl, out = item["spec"], item["is_playlist"], item["spec"]["out_dir"]
-        ext = final_ext(spec["kind"])
         base = {**self.ydl_base(), "progress_hooks": [self.hook], "ignoreerrors": False,
                 "noplaylist": not pl, "continuedl": True}
         jobs = []
         tag, trim = variant_tag(spec), trim_options(spec.get("trim"))
         for h in spec["heights"]:
+            jspec = orient_spec(spec, h, bool(item.get("vertical")))  # orientación de salida garantizada
+            ext = final_ext(jspec["kind"])
             sel = build_format_selector(h, pl, spec.get("fps"), bool(item.get("vertical")))
-            opts = {**base, "post_hooks": [self._post_video], "format": sel,
-                    "merge_output_format": "mp4", "outtmpl": os.path.join(out, video_template(h, pl, tag))}
+            opts = {**base, "post_hooks": [self._post_video], "format": sel, "merge_output_format": "mp4",
+                    "outtmpl": os.path.join(out, video_template(h, pl, variant_tag(jspec)))}
             opts.update(trim)
-            opts.update(video_extras(spec, ext))
-            jobs.append(Job(item, f"{h}p", opts, ext, spec))
+            opts.update(video_extras(jspec, ext))
+            jobs.append(Job(item, f"{h}p", opts, ext, jspec))
         if spec["audio"]:
             codec, aext, has_q = AUDIO_FORMATS[spec["audio_fmt"]]
             opts = {**base, "post_hooks": [self._post_audio], "format": "bestaudio/best",

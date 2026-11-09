@@ -7,6 +7,10 @@
 - La miniatura de un video vertical se muestra entera, con barras, en lugar de recortarse.
 
 ### Añadido
+- **Orientación del video, pensada para quien no sabe de resoluciones.** Al analizar, un aviso dice «Video VERTICAL (9:16, como un Short o Reel)» o «Video horizontal (16:9)». Nueva opción «Orientación del video»: «Como el original» (por defecto), «Vertical» u «Horizontal», con una frase que explica qué se va a descargar.
+- **Protección contra videos horizontales por error:** si el video es vertical y hay una escala horizontal elegida (p. ej. el preset «Resolume 1080p»), se da vuelta sola (1920x1080 pasa a 1080x1920) y la app avisa. Con «Vertical» u «Horizontal» se adapta el video a esa orientación con el «Modo» de Escala/corte (barras, recorte o estirado).
+- Las resoluciones se muestran con nombre corriente y tamaño real («1080p Full HD · 1080×1920») y viene marcada la recomendada: la mejor hasta Full HD (antes se marcaba la más alta).
+- Android: mismo aviso de orientación y mismas etiquetas de calidad. No convierte entre orientaciones (descarga siempre en la orientación original).
 - Escalas verticales para pantallas en retrato: 1080x1920, 2160x3840 y 720x1280.
 - El estado y «Mejor calidad» indican cuando el video es vertical.
 - Android: el mismo arreglo de calidad vertical (probado con un Short real).

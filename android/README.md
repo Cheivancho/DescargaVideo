@@ -12,6 +12,8 @@ necesita instalar nada más en el teléfono.
 - Se guarda en `Descargas/DescargadorYouTube` (sin pedir permisos de almacenamiento).
 - El motor yt-dlp se actualiza solo (como mucho una vez al día) y a mano desde «Acerca de».
 
+- Avisa si el video es **vertical** (Shorts/Reels) u horizontal y lo descarga siempre en su orientación original.
+
 **Límites:** solo videos sueltos (las listas completas no); sin recorte, subtítulos ni escalado; Android 10 o superior.
 
 ## Instalar
