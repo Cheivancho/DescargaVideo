@@ -22,6 +22,13 @@ audio en MP3 y playlists completas. Muestra una vista previa con las caracterís
 - **yt-dlp** (el motor de descarga) se actualiza solo en segundo plano, porque YouTube cambia
   con frecuencia. No tienes que hacer nada.
 - Necesita conexión a internet para actualizar; sin ella la app sigue funcionando.
+- El motor yt-dlp nuevo se descarga en segundo plano y **se aplica al reiniciar la app**; la ventana
+  nunca espera a la red al abrirse.
+- **Verificación del instalador:** la app solo se actualiza si la Release publica el SHA-256 del
+  instalador (campo `digest` del asset o el archivo `DescargadorYouTube-Setup.exe.sha256`); si no hay hash,
+  la actualización se rechaza. Ojo: el hash protege contra descargas **corruptas**, no contra una cuenta de
+  GitHub comprometida (si alguien publica un instalador malicioso, también publicaría su hash). Para eso
+  sirve la firma digital (ver Fase 4 / `docs\FIRMA.md`).
 
 ## Uso
 
@@ -47,9 +54,22 @@ Resolume Alley no abren bien. La app descarga la mejor calidad y la convierte un
 
 ProRes, DNxHR y HAP generan archivos muy pesados (varios GB por minuto en 4K).
 
+## Motor JavaScript (Deno) para YouTube
+
+Las versiones actuales de yt-dlp necesitan un *runtime* de JavaScript para resolver los desafíos de
+YouTube; sin él pueden faltar resoluciones (`No supported JavaScript runtime could be found`). yt-dlp
+solo activa **Deno** por defecto y admite también Node.js, Bun y QuickJS, y además necesita el paquete
+`yt-dlp-ejs` (ya incluido en la app). La app busca, en este orden, `deno`, `node`, `bun`, `qjs` (primero
+junto al ejecutable, luego en el `PATH`).
+
+- Para incluirlo en el instalador: descarga `deno.exe` desde <https://github.com/denoland/deno/releases>
+  (`deno-x86_64-pc-windows-msvc.zip`) y colócalo en `vendor\` antes de compilar. `build.ps1` avisa si falta;
+  `installer.iss` lo copia si existe.
+- Más información: <https://github.com/yt-dlp/yt-dlp/wiki/EJS>.
+
 ## Compilar desde el código
 
-Requisitos: Python 3.12 (`pip install yt-dlp pillow pyinstaller`), [Inno Setup 6](https://jrsoftware.org/isinfo.php)
+Requisitos: Python 3.12 (`pip install yt-dlp yt-dlp-ejs pillow pyinstaller`), [Inno Setup 6](https://jrsoftware.org/isinfo.php)
 y un `ffmpeg.exe` en `vendor\`.
 
 ```powershell

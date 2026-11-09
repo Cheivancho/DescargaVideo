@@ -34,6 +34,8 @@ Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; Gr
 [Files]
 Source: "dist\DescargadorYouTube\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 Source: "vendor\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Runtime de JavaScript para YouTube (opcional al compilar; ver README)
+Source: "vendor\deno.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\Descargador de YouTube"; Filename: "{app}\DescargadorYouTube.exe"

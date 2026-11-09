@@ -5,20 +5,28 @@
 - Panel derecho con miniatura y características del video.
 Requiere: yt-dlp, Pillow y ffmpeg (en el PATH o junto al ejecutable).
 """
+import copy
+import ctypes
+import glob
 import io
+import logging
+import logging.handlers
 import os
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
+import urllib.parse
 import urllib.request
 from tkinter import filedialog, messagebox, ttk
 
 import updater
 
-updater.prepare_ytdlp()  # actualiza yt-dlp si hay versión nueva (debe ir antes de importarlo)
+updater.prepare_ytdlp()  # solo aplica lo ya descargado (local, sin red); debe ir antes de importar yt_dlp
 
 import yt_dlp  # noqa: E402
 from PIL import Image, ImageOps, ImageTk  # noqa: E402
@@ -69,7 +77,173 @@ CORAL_SOFT = "#f77a99"
 MUTED = "#a0607a"
 FONT = "Segoe UI"
 
-THUMB_W, THUMB_H = 320, 180
+THUMB_W, THUMB_H = 320, 180  # en píxeles a 96 DPI; se escalan con el DPI de la pantalla
+INFO_MAX_AGE = 20 * 60  # segundos: pasado este tiempo las URLs de stream del análisis pueden haber caducado
+
+log = logging.getLogger("descargador")
+
+
+def setup_logging() -> None:
+    """Log rotativo en DATA_DIR\\log.txt (~1 MB, 3 copias). Nunca debe impedir que la app arranque."""
+    if log.handlers:
+        return
+    log.setLevel(logging.INFO)
+    try:
+        os.makedirs(updater.DATA_DIR, exist_ok=True)
+        h = logging.handlers.RotatingFileHandler(os.path.join(updater.DATA_DIR, "log.txt"), maxBytes=1_000_000,
+                                                 backupCount=3, encoding="utf-8")
+        h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        log.addHandler(h)
+    except OSError:
+        log.addHandler(logging.NullHandler())
+
+
+def enable_dpi_awareness() -> None:
+    """Evita el escalado borroso de Windows en pantallas con DPI alto."""
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # por monitor
+    except Exception:  # noqa: BLE001
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def find_js_runtimes() -> dict:
+    """Runtime de JavaScript para los desafíos de YouTube (EJS). {} si no hay ninguno instalado."""
+    for name, exe in (("deno", "deno"), ("node", "node"), ("bun", "bun"), ("quickjs", "qjs")):
+        path = shutil.which(exe)
+        if path:
+            return {name: {"path": path}}
+    return {}
+
+
+def video_list_info(url: str) -> tuple[bool, bool]:
+    """(tiene_video, tiene_lista) para enlaces de YouTube, p. ej. watch?v=X&list=Y -> (True, True)."""
+    try:
+        u = urllib.parse.urlparse(url.strip())
+    except ValueError:
+        return False, False
+    host = (u.hostname or "").lower()
+    q = urllib.parse.parse_qs(u.query)
+    if host == "youtu.be":
+        return bool(u.path.strip("/")), bool(q.get("list"))
+    if host == "youtube.com" or host.endswith(".youtube.com"):
+        return bool(q.get("v")), bool(q.get("list"))
+    return False, False
+
+
+def has_video_and_list(url: str) -> bool:
+    v, lst = video_list_info(url)
+    return v and lst
+
+
+def fmt_speed(bps) -> str:
+    if not bps:
+        return ""
+    for unit, div in (("GiB/s", 2 ** 30), ("MiB/s", 2 ** 20), ("KiB/s", 2 ** 10)):
+        if bps >= div:
+            return f"{bps / div:.1f} {unit}"
+    return f"{bps:.0f} B/s"
+
+
+def fmt_eta(sec) -> str:
+    if sec is None:
+        return ""
+    h, r = divmod(int(sec), 3600)
+    m, s = divmod(r, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def final_ext(kind: str) -> str:
+    """Extensión del archivo de video una vez convertido al formato de salida."""
+    return RECODE_SPECS[kind][1] if kind in RECODE_SPECS else ".mp4"
+
+
+def diagnose_formats(heights: list, warning: str | None, has_js: bool) -> str | None:
+    """Mensaje útil cuando el análisis devuelve pocas resoluciones (o ninguna); None si todo parece normal."""
+    if heights and len(heights) > 2 and max(heights) > 360:
+        return None
+    parts = ["Se encontraron muy pocas resoluciones." if heights else "No se encontraron resoluciones."]
+    if not has_js:
+        parts.append("No hay un motor JavaScript (Deno): YouTube oculta formatos sin él. "
+                     "Coloca deno.exe junto a la app (ver README).")
+    if warning:
+        parts.append("Aviso de yt-dlp: " + warning.strip()[:200])
+    parts.append("Prueba otro video, actualiza el motor (Ayuda) o inicia sesión con cookies del navegador.")
+    return " ".join(parts)
+
+
+class YtLogger:
+    """Logger para yt-dlp: escribe en el log y recuerda la última advertencia."""
+
+    def __init__(self) -> None:
+        self.last_warning: str | None = None
+
+    def debug(self, msg: str) -> None:
+        (log.debug if msg.startswith("[debug] ") else log.info)(msg)
+
+    def info(self, msg: str) -> None:
+        log.info(msg)
+
+    def warning(self, msg: str) -> None:
+        log.warning(msg)
+        self.last_warning = msg
+
+    def error(self, msg: str) -> None:
+        log.error(msg)
+
+
+class ProgressTracker:
+    """Progreso global monótono de una descarga: trabajos × videos de la lista × pistas (video, audio)."""
+
+    VIDEO_WEIGHT = 0.85  # la pista de video pesa más que la de audio
+
+    def __init__(self, n_jobs: int) -> None:
+        self.n_jobs = max(1, n_jobs)
+        self.last = 0.0
+        self.start_job(1, "")
+
+    def start_job(self, idx: int, label: str) -> None:
+        self.job, self.label = idx, label
+        self.entry, self.n_entries = 0, 1
+        self.files_done, self.weights = 0, None
+        self.last = max(self.last, (idx - 1) * 100 / self.n_jobs)
+
+    def update(self, d: dict) -> tuple[float, str]:
+        info = d.get("info_dict") or {}
+        pidx = info.get("playlist_index") or 1
+        self.n_entries = info.get("n_entries") or info.get("playlist_count") or self.n_entries
+        if pidx != self.entry:
+            self.entry, self.files_done, self.weights = pidx, 0, None
+        if self.weights is None:
+            video_only = info.get("vcodec") not in (None, "none") and info.get("acodec") in (None, "none")
+            self.weights = [self.VIDEO_WEIGHT, 1 - self.VIDEO_WEIGHT] if video_only else [1.0]
+        w = self.weights
+        if d.get("status") == "finished":
+            self.files_done = min(self.files_done + 1, len(w))
+            frac = sum(w[:self.files_done])
+            text_tail = "procesando…"
+        else:
+            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            f = min((d.get("downloaded_bytes") or 0) / total, 1.0) if total else 0.0
+            cur = w[self.files_done] if self.files_done < len(w) else 0
+            frac = sum(w[:self.files_done]) + cur * f
+            eta = ("ETA " + fmt_eta(d.get("eta"))) if d.get("eta") is not None else ""
+            text_tail = " · ".join(x for x in (fmt_speed(d.get("speed")), eta) if x)
+        n = max(self.n_entries, 1)
+        pct = ((self.job - 1) + ((self.entry - 1) + min(frac, 1.0)) / n) / self.n_jobs * 100
+        self.last = max(self.last, min(pct, 100.0))
+        parts = [f"[{self.job}/{self.n_jobs}] {self.label}"]
+        if n > 1:
+            parts.append(f"video {self.entry} de {n}")
+        elif len(w) > 1:
+            parts.append("audio" if self.files_done >= 1 else "video")
+        if text_tail:
+            parts.append(text_tail)
+        return self.last, " · ".join(parts)
 
 
 def fmt_num(n):
@@ -97,16 +271,27 @@ def fmt_dur(sec):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+        self.ui = max(self.winfo_fpixels("1i") / 96, 1.0)  # factor de escala por DPI
+        self.thumb_w, self.thumb_h = self.px(THUMB_W), self.px(THUMB_H)
         self.title("Descargador de YouTube")
-        self.geometry("1020x640")
-        self.minsize(960, 640)
+        self.geometry(f"{self.px(1020)}x{self.px(640)}")
+        self.minsize(self.px(960), self.px(640))
         self.configure(bg=BG)
         try:
             self.iconbitmap(os.path.join(_RES_DIR, "icon.ico"))
         except Exception:  # noqa: BLE001
             pass
         self.q = queue.Queue()
+        self.ytlog = YtLogger()
+        self.js_runtimes = find_js_runtimes()
         self.is_playlist = False
+        self.analyzed_url = None  # URL realmente analizada: la descarga usa esta, no el campo de texto
+        self.analyzed_info = None  # info de un video individual, reutilizable mientras no caduque
+        self.analyzed_at = 0.0
+        self.playlist_choice = None  # "video" | "list" | None (el enlace no era ambiguo)
+        self.tracker = None
+        self.skipped = []
+        self._ff_proc = None
         self.res_vars = {}
         self.busy = False
         self._out_fmt = "h264"
@@ -117,6 +302,12 @@ class App(tk.Tk):
         self._build()
         self.after(100, self._poll)
         self.after(1200, lambda: threading.Thread(target=self._check_update_worker, daemon=True).start())
+        # La consulta/descarga de yt-dlp va en segundo plano y DESPUÉS de mostrar la ventana
+        self.after(2500, lambda: threading.Thread(target=self._engine_update_worker, daemon=True).start())
+
+    def px(self, n: int) -> int:
+        """Píxeles a 96 DPI -> píxeles reales de esta pantalla."""
+        return int(round(n * getattr(self, "ui", 1.0)))
 
     # ---------- Estilos ----------
     def _styles(self):
@@ -147,11 +338,15 @@ class App(tk.Tk):
         head.pack(fill="x", padx=24, pady=(20, 8))
         self._label(head, "▶  Descargador de YouTube", 18, True).pack(side="left")
         self._label(head, f"v{updater.VERSION}", 9, False, MUTED).pack(side="left", padx=(10, 0), pady=(8, 0))
+        self.engine_lbl = self._label(head, "", 9, False, MUTED)
+        self.engine_lbl.pack(side="right", pady=(8, 0))
 
         # Barra de URL
         bar = tk.Frame(self, bg=BG)
         bar.pack(fill="x", padx=24, pady=(4, 14))
-        self.url = ttk.Entry(bar, font=(FONT, 11))
+        self.url_var = tk.StringVar()
+        self.url_var.trace_add("write", self._on_url_edit)
+        self.url = ttk.Entry(bar, font=(FONT, 11), textvariable=self.url_var)
         self.url.pack(side="left", fill="x", expand=True, ipady=3)
         self.url.bind("<Return>", lambda e: self.analyze())
         self.btn_an = self._btn(bar, "Analizar", self.analyze)
@@ -228,19 +423,19 @@ class App(tk.Tk):
 
         self.status = tk.StringVar(value="Pega un enlace y pulsa Analizar.")
         tk.Label(rin, textvariable=self.status, bg=PANEL, fg=CORAL_SOFT, font=(FONT, 9),
-                 wraplength=380, justify="left", anchor="w").pack(side="bottom", fill="x", pady=(0, 8))
+                 wraplength=self.px(380), justify="left", anchor="w").pack(side="bottom", fill="x", pady=(0, 8))
         self.bar = ttk.Progressbar(rin, maximum=100, style="Coral.Horizontal.TProgressbar")
         self.bar.pack(side="bottom", fill="x", pady=(0, 6))
 
         # Contenedor de tamaño fijo: la miniatura nunca se encoge ni depende del largo del título
-        self.thumb_box = tk.Frame(rin, bg=FIELD, height=THUMB_H)
+        self.thumb_box = tk.Frame(rin, bg=FIELD, height=self.thumb_h)
         self.thumb_box.pack(fill="x")
         self.thumb_box.pack_propagate(False)
         self.thumb = tk.Label(self.thumb_box, bg=FIELD, fg=MUTED, text="Vista previa", font=(FONT, 11), bd=0)
         self.thumb.place(relx=0.5, rely=0.5, anchor="center")
         self.dur_badge = self._label(self.thumb, "", 9, True, "white", "#000000", padx=6, pady=1)
 
-        self.title_lbl = self._label(rin, "Sin video", 12, True, CORAL, PANEL, wraplength=360, justify="left",
+        self.title_lbl = self._label(rin, "Sin video", 12, True, CORAL, PANEL, wraplength=self.px(360), justify="left",
                                      anchor="w")
         self.title_lbl.pack(anchor="w", pady=(8, 2), fill="x")
         self.chan_lbl = self._label(rin, "", 10, False, CORAL_SOFT, PANEL, anchor="w")
@@ -277,12 +472,13 @@ class App(tk.Tk):
         for var in self.res_vars.values():
             var.set(v)
 
-    def _show_resolutions(self, heights):
+    def _show_resolutions(self, heights, hint=None):
         for w in self.res_frame.winfo_children():
             w.destroy()
         self.res_vars = {}
         if not heights:
-            self._label(self.res_frame, "No se encontraron resoluciones.", 10, False, MUTED, PANEL).pack(anchor="w")
+            self._label(self.res_frame, "No se encontraron resoluciones.\nRevisa el mensaje de estado.", 10, False,
+                        MUTED, PANEL, justify="left").pack(anchor="w")
             return
         for i, h in enumerate(heights):
             var = tk.BooleanVar(value=(i == 0))
@@ -309,19 +505,80 @@ class App(tk.Tk):
                 w.config(fg=BG if str(sel) in ("1", "True") else CORAL)
 
     # ---------- Análisis ----------
+    def _url_matches(self) -> bool:
+        return self.analyzed_url is not None and self.url_var.get().strip() == self.analyzed_url
+
+    def _on_url_edit(self, *_) -> None:
+        """Si se edita la URL después de analizar, DESCARGAR queda bloqueado hasta volver a analizar."""
+        if self.analyzed_url is None or self.busy:
+            return
+        if self._url_matches():
+            self._set_dl(True)
+        else:
+            self._set_dl(False)
+            self.status.set("La URL cambió. Vuelve a pulsar Analizar.")
+
+    def _ask_playlist_choice(self):
+        """¿Solo este video o toda la lista? Devuelve "video", "list" o None (cancelar)."""
+        result = {"v": None}
+        dlg = tk.Toplevel(self, bg=PANEL)
+        dlg.title("Enlace con lista")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        try:
+            dlg.iconbitmap(os.path.join(_RES_DIR, "icon.ico"))
+        except Exception:  # noqa: BLE001
+            pass
+        box = tk.Frame(dlg, bg=PANEL)
+        box.pack(padx=24, pady=20)
+        self._label(box, "Este enlace es de un video dentro de una lista.", 11, True, CORAL, PANEL).pack(anchor="w")
+        self._label(box, "¿Descargar solo este video o toda la lista?", 10, False, CORAL_SOFT, PANEL
+                    ).pack(anchor="w", pady=(4, 14))
+        row = tk.Frame(box, bg=PANEL)
+        row.pack(fill="x")
+
+        def pick(v):
+            result["v"] = v
+            dlg.destroy()
+        self._btn(row, "Solo este video", lambda: pick("video"), solid=True).pack(side="left")
+        self._btn(row, "Toda la lista", lambda: pick("list")).pack(side="left", padx=8)
+        self._btn(row, "Cancelar", lambda: pick(None)).pack(side="left")
+        dlg.protocol("WM_DELETE_WINDOW", lambda: pick(None))
+        dlg.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_reqwidth()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_reqheight()) // 2
+        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        dlg.grab_set()
+        self.wait_window(dlg)
+        return result["v"]
+
+    def _ydl_base(self) -> dict:
+        opts = {"quiet": True, "noprogress": True, "logger": self.ytlog}
+        if self.js_runtimes:
+            opts["js_runtimes"] = self.js_runtimes
+        return opts
+
     def analyze(self):
-        url = self.url.get().strip()
+        url = self.url_var.get().strip()
         if not url or self.busy:
             return
+        choice = None
+        if has_video_and_list(url):
+            choice = self._ask_playlist_choice()
+            if choice is None:
+                return
         self.busy = True
+        self.analyzed_url = None
         self.btn_an.config(state="disabled")
         self._set_dl(False)
         self.status.set("Analizando…")
-        threading.Thread(target=self._analyze_worker, args=(url,), daemon=True).start()
+        threading.Thread(target=self._analyze_worker, args=(url, choice), daemon=True).start()
 
-    def _analyze_worker(self, url):
+    def _analyze_worker(self, url, choice):
         try:
-            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "extract_flat": "in_playlist"}) as ydl:
+            self.ytlog.last_warning = None
+            opts = {**self._ydl_base(), "extract_flat": "in_playlist", "noplaylist": choice == "video"}
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
             is_pl = info.get("_type") == "playlist"
             if is_pl:
@@ -342,12 +599,17 @@ class App(tk.Tk):
                 except Exception:  # noqa: BLE001
                     data = None
             fps = max((f.get("fps") or 0 for f in info.get("formats", []) or []), default=0)
-            self.q.put(("analyzed", info, is_pl, heights, data, fps))
+            self.q.put(("analyzed", url, choice, info, is_pl, heights, data, fps))
         except Exception as e:  # noqa: BLE001
+            log.exception("Error al analizar %s", url)
             self.q.put(("error", str(e)))
 
-    def _apply_info(self, info, is_pl, heights, data, fps):
+    def _apply_info(self, url, choice, info, is_pl, heights, data, fps):
         self.is_playlist = is_pl
+        self.analyzed_url = url
+        self.playlist_choice = choice
+        self.analyzed_info = None if is_pl else info
+        self.analyzed_at = time.time()
         title = info.get("title") or "Sin título"
         self.title_lbl.config(text=title if len(title) <= 80 else title[:79].rstrip() + "…")
         if is_pl:
@@ -367,18 +629,21 @@ class App(tk.Tk):
         for k, v in vals.items():
             self.meta[k].config(text=v)
         self._set_thumbnail(data)
-        self._show_resolutions(heights)
-        self.status.set("Playlist: se usará la mejor calidad hasta la resolución elegida."
-                        if is_pl else f"{len(heights)} resoluciones disponibles. Elige y descarga.")
+        hint = None if is_pl else diagnose_formats(heights, self.ytlog.last_warning, bool(self.js_runtimes))
+        self._show_resolutions(heights, hint)
+        if is_pl:
+            self.status.set("Playlist: se usará la mejor calidad hasta la resolución elegida.")
+        else:
+            self.status.set(hint or f"{len(heights)} resoluciones disponibles. Elige y descarga.")
 
     def _set_thumbnail(self, data):
         """Muestra la miniatura recortada a 16:9; si no hay o falla, vuelve al marcador."""
         try:
             if not data:
                 raise ValueError("sin miniatura")
-            img = ImageOps.fit(Image.open(io.BytesIO(data)).convert("RGB"), (THUMB_W, THUMB_H))
+            img = ImageOps.fit(Image.open(io.BytesIO(data)).convert("RGB"), (self.thumb_w, self.thumb_h))
             self.thumb_img = ImageTk.PhotoImage(img)
-            self.thumb.config(image=self.thumb_img, text="", width=THUMB_W, height=THUMB_H)
+            self.thumb.config(image=self.thumb_img, text="", width=self.thumb_w, height=self.thumb_h)
         except Exception:  # noqa: BLE001
             self.thumb_img = None
             self.thumb.config(image="", text="Sin vista previa", width=0, height=0)
@@ -387,6 +652,10 @@ class App(tk.Tk):
     # ---------- Descarga ----------
     def download(self):
         if self.busy:
+            return
+        if not self._url_matches():
+            self.status.set("La URL cambió. Vuelve a pulsar Analizar.")
+            self._set_dl(False)
             return
         heights = [h for h, v in self.res_vars.items() if v.get()]
         want_audio = self.audio_var.get()
@@ -400,8 +669,9 @@ class App(tk.Tk):
         self._set_dl(False)
         self.btn_an.config(state="disabled")
         self.btn_cancel.config(state="normal")
-        threading.Thread(target=self._download_worker,
-                         args=(self.url.get().strip(), heights, want_audio), daemon=True).start()
+        info = self.analyzed_info if (time.time() - self.analyzed_at) < INFO_MAX_AGE else None
+        threading.Thread(target=self._download_worker, args=(self.analyzed_url, heights, want_audio, info),
+                         daemon=True).start()
 
     def _cancel(self):
         self.cancel = True
@@ -410,20 +680,38 @@ class App(tk.Tk):
     def _hook(self, d):
         if self.cancel:
             raise yt_dlp.utils.DownloadCancelled("Cancelado por el usuario")
-        if d["status"] == "downloading":
-            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-            if total:
-                self.q.put(("progress", d["downloaded_bytes"] * 100 / total,
-                            f"Descargando… {d.get('_percent_str', '').strip()}  {d.get('_speed_str', '').strip()}  "
-                            f"ETA {d.get('_eta_str', '').strip()}"))
-        elif d["status"] == "finished":
-            self.q.put(("progress", 100, "Procesando con ffmpeg…"))
+        if self.tracker:
+            pct, text = self.tracker.update(d)
+            self.q.put(("progress", pct, text))
+
+    def _kill_ffmpeg(self, proc):
+        """Termina ffmpeg; si no responde en unos segundos, lo mata."""
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _remove_quietly(path):
+        for _ in range(10):  # Windows puede tardar un instante en soltar el archivo
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                return
+            except OSError:
+                time.sleep(0.3)
 
     def _ensure_compatible(self, path):
         """Convierte el video descargado al formato de salida elegido.
 
         H.264: solo recodifica lo necesario (video VP9/AV1 y/o audio Opus).
         Resto de formatos: recodifica siempre y borra el MP4 intermedio.
+        Se puede cancelar: se detiene ffmpeg, se borra el archivo parcial y se conserva el MP4 original.
         """
         kind = self._out_fmt
         if kind == "original" or not path or not path.lower().endswith(".mp4") or not os.path.isfile(path):
@@ -431,10 +719,11 @@ class App(tk.Tk):
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         if kind == "h264":
             try:
-                info = subprocess.run(["ffmpeg", "-hide_banner", "-i", path], capture_output=True,
+                info = subprocess.run(["ffmpeg", "-hide_banner", "-i", path], capture_output=True, timeout=30,
                                       text=True, encoding="utf-8", errors="replace",
                                       creationflags=flags).stderr
-            except OSError:
+            except (OSError, subprocess.TimeoutExpired):
+                log.warning("No se pudo inspeccionar %s con ffmpeg", path, exc_info=True)
                 return
             vid = re.search(r"Stream #.*Video: (\w+)", info)
             aud = re.search(r"Stream #.*Audio: (\w+)", info)
@@ -453,9 +742,30 @@ class App(tk.Tk):
         self.q.put(("status", f"Convirtiendo a {label} (puede tardar)…"))
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:v:0", "-map", "0:a?"]
         cmd += vcodec + acodec + extra + [dest]
-        if subprocess.run(cmd, creationflags=flags).returncode != 0:
-            if os.path.exists(dest):
-                os.remove(dest)
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                    encoding="utf-8", errors="replace", creationflags=flags)
+        except OSError:
+            log.exception("No se pudo lanzar ffmpeg")
+            self.q.put(("status", f"No se pudo convertir a {label}; se conserva el MP4 original."))
+            return
+        self._ff_proc = proc
+        err = ""
+        try:
+            while True:
+                try:
+                    _, err = proc.communicate(timeout=0.3)
+                    break
+                except subprocess.TimeoutExpired:
+                    if self.cancel:
+                        self._kill_ffmpeg(proc)
+                        self._remove_quietly(dest)
+                        raise yt_dlp.utils.DownloadCancelled("Cancelado durante la conversión") from None
+        finally:
+            self._ff_proc = None
+        if proc.returncode != 0:
+            log.error("ffmpeg falló (%s): %s", label, (err or "").strip()[-500:])
+            self._remove_quietly(dest)
             self.q.put(("status", f"No se pudo convertir a {label}; se conserva el MP4 original."))
             return
         if ext == ".mp4":
@@ -463,12 +773,58 @@ class App(tk.Tk):
         else:
             os.remove(path)
 
-    def _download_worker(self, url, heights, want_audio):
+    @staticmethod
+    def _cleanup_orphans(out):
+        """Borra restos de conversiones interrumpidas (*.compat.mp4) en la carpeta y sus subcarpetas directas."""
+        for pat in ("*.compat.mp4", os.path.join("*", "*.compat.mp4")):
+            for p in glob.glob(os.path.join(glob.escape(out), pat)):
+                try:
+                    os.remove(p)
+                    log.info("Resto de conversión eliminado: %s", p)
+                except OSError:
+                    pass
+
+    def _make_skip_filter(self, holder, ext):
+        """match_filter de yt-dlp: salta lo que ya existe con su nombre final (extensión tras convertir)."""
+        def match(info_dict, *, incomplete=False):
+            if incomplete or holder.get("ydl") is None:
+                return None
+            try:
+                final = os.path.splitext(holder["ydl"].prepare_filename(info_dict))[0] + ext
+            except Exception:  # noqa: BLE001
+                return None
+            if os.path.isfile(final):
+                name = os.path.basename(final)
+                self.skipped.append(name)
+                self.q.put(("status", f"Ya existía: {name}"))
+                return f"ya existía: {name}"
+            return None
+        return match
+
+    def _run_job(self, opts, url, info, ext):
+        holder = {}
+        opts = {**opts, "match_filter": self._make_skip_filter(holder, ext)}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            holder["ydl"] = ydl
+            if info is not None:
+                try:  # reutiliza el análisis: evita re-extraer el video por cada resolución
+                    ydl.process_ie_result(copy.deepcopy(info), download=True)
+                    return
+                except yt_dlp.utils.DownloadCancelled:
+                    raise
+                except Exception:  # noqa: BLE001
+                    if self.cancel:  # yt-dlp envuelve la cancelación de un post-hook en otro error
+                        raise yt_dlp.utils.DownloadCancelled("Cancelado por el usuario") from None
+                    log.warning("No se pudo reutilizar el análisis; se vuelve a extraer", exc_info=True)
+            ydl.download([url])
+
+    def _download_worker(self, url, heights, want_audio, info):
         out = self.out_dir.get()
-        base = {"quiet": True, "no_warnings": True, "progress_hooks": [self._hook],
-                "ignoreerrors": False, "noplaylist": not self.is_playlist}
+        kind = self._out_fmt
+        base = {**self._ydl_base(), "progress_hooks": [self._hook], "ignoreerrors": False,
+                "noplaylist": not self.is_playlist, "continuedl": True}
         vbase = {**base, "post_hooks": [self._ensure_compatible]}
-        jobs = []
+        jobs = []  # (etiqueta, opciones, extensión final)
         for h in heights:
             if self.is_playlist:
                 fmt = (f"bestvideo[height<={h}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
@@ -479,32 +835,54 @@ class App(tk.Tk):
                        f"bestvideo[height={h}]+bestaudio/best[height={h}]")
                 tmpl = "%(title)s [" + str(h) + "p].%(ext)s"
             jobs.append((f"{h}p", {**vbase, "format": fmt, "merge_output_format": "mp4",
-                                   "outtmpl": os.path.join(out, tmpl)}))
+                                   "outtmpl": os.path.join(out, tmpl)}, final_ext(kind)))
         if want_audio:
             tmpl = ("%(playlist_title)s/%(playlist_index)03d - %(title)s.%(ext)s"
                     if self.is_playlist else "%(title)s.%(ext)s")
             jobs.append(("MP3", {**base, "format": "bestaudio/best", "outtmpl": os.path.join(out, tmpl),
                                  "postprocessors": [{"key": "FFmpegExtractAudio",
-                                                     "preferredcodec": "mp3", "preferredquality": "320"}]}))
+                                                     "preferredcodec": "mp3", "preferredquality": "320"}]}, ".mp3"))
+        self.tracker = ProgressTracker(len(jobs))
+        self.skipped = []
         failed = []
+        self._cleanup_orphans(out)
         try:
-            for i, (label, opts) in enumerate(jobs, 1):
-                self.q.put(("status", f"[{i}/{len(jobs)}] Iniciando {label}…"))
+            for i, (label, opts, ext) in enumerate(jobs, 1):
+                if self.cancel:
+                    raise yt_dlp.utils.DownloadCancelled("Cancelado por el usuario")
+                self.tracker.start_job(i, label)
+                self.q.put(("progress", self.tracker.last, f"[{i}/{len(jobs)}] Iniciando {label}…"))
                 try:
-                    with yt_dlp.YoutubeDL(opts) as ydl:
-                        ydl.download([url])
+                    self._run_job(opts, url, info, ext)
                 except yt_dlp.utils.DownloadCancelled:
                     raise
                 except Exception as e:  # noqa: BLE001
+                    if self.cancel:
+                        raise yt_dlp.utils.DownloadCancelled("Cancelado por el usuario") from None
+                    log.exception("Falló el trabajo %s de %s", label, url)
                     failed.append(f"{label}: {str(e)[:120]}")
             msg = "✔ Descarga completada en: " + out
+            if self.skipped:
+                msg += "\nYa existían: " + ", ".join(self.skipped)
             if failed:
                 msg += "\nFallaron: " + "; ".join(failed)
             self.q.put(("done", msg))
         except yt_dlp.utils.DownloadCancelled:
             self.q.put(("done", "Descarga cancelada."))
         except Exception as e:  # noqa: BLE001
+            log.exception("Error en la descarga")
             self.q.put(("done", f"Error: {e}"))
+        finally:
+            self.tracker = None
+
+    # ---------- Motor yt-dlp en segundo plano ----------
+    def _engine_update_worker(self):
+        try:
+            v = updater.background_ytdlp_update()
+            if v:
+                self.q.put(("engine", v))
+        except Exception:  # noqa: BLE001
+            log.warning("Fallo al actualizar el motor", exc_info=True)
 
     # ---------- Actualización de la app ----------
     def _check_update_worker(self):
@@ -524,7 +902,7 @@ class App(tk.Tk):
             dlg.iconbitmap(os.path.join(_RES_DIR, "icon.ico"))
         except Exception:  # noqa: BLE001
             pass
-        w, h = 460, 330
+        w, h = self.px(460), self.px(330)
         x = self.winfo_rootx() + (self.winfo_width() - w) // 2
         y = self.winfo_rooty() + (self.winfo_height() - h) // 2
         dlg.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
@@ -577,7 +955,9 @@ class App(tk.Tk):
                     self._apply_info(*msg[1:])
                     self.busy = False
                     self.btn_an.config(state="normal")
-                    self._set_dl(True)
+                    self._set_dl(self._url_matches())
+                elif kind == "engine":
+                    self.engine_lbl.config(text="Motor actualizado (se aplica al reiniciar)")
                 elif kind == "app_update":
                     self._show_update_dialog(msg[1])
                 elif kind == "upd_progress":
@@ -604,7 +984,7 @@ class App(tk.Tk):
                     self.busy = False
                     self.bar["value"] = 0
                     self.btn_an.config(state="normal")
-                    self._set_dl(True)
+                    self._set_dl(self._url_matches())
                     self.btn_cancel.config(state="disabled")
                     self.status.set(msg[1])
         except queue.Empty:
@@ -615,8 +995,17 @@ class App(tk.Tk):
 if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[1] == "--selftest":  # diagnóstico: escribe info a un archivo y sale
         import yt_dlp.extractor.youtube as _yt
+        try:
+            import yt_dlp_ejs
+            _ejs = yt_dlp_ejs.version
+        except Exception:  # noqa: BLE001
+            _ejs = "NO DISPONIBLE"
         with open(sys.argv[2], "w", encoding="utf-8") as _f:
-            _f.write("app=%s\nyt_dlp=%s\nfile=%s\nextractor=%s\n" % (
-                updater.VERSION, yt_dlp.version.__version__, yt_dlp.__file__, _yt.__file__))
+            _f.writelines(line + "\n" for line in (
+                f"app={updater.VERSION}", f"yt_dlp={yt_dlp.version.__version__}", f"file={yt_dlp.__file__}",
+                f"extractor={_yt.__file__}", f"yt_dlp_ejs={_ejs}",
+                f"js_runtime={list(find_js_runtimes()) or 'NINGUNO'}", f"ffmpeg={shutil.which('ffmpeg')}"))
         sys.exit(0)
+    enable_dpi_awareness()
+    setup_logging()
     App().mainloop()
