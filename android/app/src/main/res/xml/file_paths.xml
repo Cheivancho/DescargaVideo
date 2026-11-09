@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Aquí se guarda la actualización descargada antes de instalarla -->
+    <cache-path name="updates" path="updates/" />
+</paths>

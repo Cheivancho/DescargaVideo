@@ -16,6 +16,13 @@ sealed interface Analysis {
     data class Failed(val message: String) : Analysis
 }
 
+sealed interface UpdateUi {
+    data object Idle : UpdateUi
+    data class Downloading(val progress: Float) : UpdateUi
+    data object NeedsPermission : UpdateUi
+    data class Failed(val message: String) : UpdateUi
+}
+
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("ajustes", Context.MODE_PRIVATE)
 
@@ -37,6 +44,57 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Aviso de un solo uso (p. ej. «el enlace es una lista»). */
     var notice by mutableStateOf<String?>(null)
         private set
+
+    /** Versión nueva de la app encontrada en GitHub (null si no hay o ya se descartó). */
+    var update by mutableStateOf<UpdateInfo?>(null)
+        private set
+    var updateUi by mutableStateOf<UpdateUi>(UpdateUi.Idle)
+        private set
+
+    init {
+        checkUpdate() // al abrir la app: si hay una versión nueva, se avisa
+    }
+
+    /**
+     * Busca una versión nueva. Al abrir la app es silencioso si no hay nada o falla la red. En una búsqueda manual
+     * se llama a [onResult] con un mensaje, o con null si se encontró una versión nueva (se abre el aviso).
+     */
+    fun checkUpdate(manual: Boolean = false, onResult: (String?) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                val found = Updater.check(getApplication())
+                if (found == null) {
+                    if (manual) onResult("Ya tienes la última versión (${Updater.installedVersion(getApplication())}).")
+                } else {
+                    update = found
+                    updateUi = UpdateUi.Idle
+                    if (manual) onResult(null)
+                }
+            } catch (e: Throwable) {
+                if (manual) onResult("No se pudo comprobar: " + friendlyError(e.message))
+            }
+        }
+    }
+
+    fun dismissUpdate() {
+        update = null
+        updateUi = UpdateUi.Idle
+    }
+
+    /** Descarga la actualización, comprueba que no esté dañada y abre el instalador de Android. */
+    fun startUpdate() {
+        val info = update ?: return
+        if (updateUi is UpdateUi.Downloading) return
+        updateUi = UpdateUi.Downloading(0f)
+        viewModelScope.launch {
+            try {
+                val apk = Updater.download(getApplication(), info) { p -> updateUi = UpdateUi.Downloading(p) }
+                if (Updater.install(getApplication(), apk)) dismissUpdate() else updateUi = UpdateUi.NeedsPermission
+            } catch (e: Throwable) {
+                updateUi = UpdateUi.Failed(friendlyError(e.message))
+            }
+        }
+    }
 
     val canDownload: Boolean
         get() = analysis is Analysis.Ready && analyzedUrl != null && url.trim() == analyzedUrl

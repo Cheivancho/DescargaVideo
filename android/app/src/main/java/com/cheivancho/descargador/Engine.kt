@@ -154,7 +154,7 @@ fun friendlyError(raw: String?): String {
         "age" in low && ("restrict" in low || "confirm your age" in low) ->
             "El video tiene restricción de edad y requiere iniciar sesión."
         "urlopen error" in low || "getaddrinfo" in low || "timed out" in low || "unable to download webpage" in low ||
-            "network is unreachable" in low -> "No hay conexión a internet."
+            "network is unreachable" in low || "unable to resolve host" in low -> "No hay conexión a internet."
         "javascript runtime" in low -> "Falta el motor JavaScript de YouTube. Actualiza el motor desde «Acerca de»."
         "no space left" in low -> "No queda espacio en el teléfono."
         else -> msg.lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() }?.take(220)

@@ -1,5 +1,9 @@
 # Changelog
 
+## Android 0.1.2 — 2026-11-09
+
+- Aviso de actualización: al abrir la app avisa si hay una versión nueva en GitHub y permite descargarla e instalarla (con comprobación de SHA-256). Incluye un botón «Buscar actualización de la app» en «Acerca de».
+
 ## [2.0.2] — 2026-11-09
 
 ### Corregido

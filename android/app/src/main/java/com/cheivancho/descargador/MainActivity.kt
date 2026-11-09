@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,9 +40,11 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -175,7 +178,8 @@ private fun Screen(vm: MainViewModel) {
         }
     }
 
-    if (showAbout) AboutDialog(onClose = { showAbout = false })
+    vm.update?.let { UpdateDialog(vm, it) }
+    if (showAbout) AboutDialog(vm, onClose = { showAbout = false })
 }
 
 private val MaterialColorError = Color(0xFFFF6B6B)
@@ -328,7 +332,66 @@ private fun JobCard(job: Job, ctx: Context) {
 }
 
 @Composable
-private fun AboutDialog(onClose: () -> Unit) {
+private fun UpdateDialog(vm: MainViewModel, info: UpdateInfo) {
+    val ctx = LocalContext.current
+    val ui = vm.updateUi
+    val busy = ui is UpdateUi.Downloading
+    AlertDialog(
+        onDismissRequest = { if (!busy) vm.dismissUpdate() },
+        containerColor = Panel,
+        title = { Text("¡Hay una nueva versión!", color = TextMain) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Tienes la ${Updater.installedVersion(ctx)} y ya está disponible la ${info.version}.", color = TextMain)
+                val notes = plainNotes(info.notes)
+                if (notes.isNotEmpty()) {
+                    Text(
+                        notes, color = Muted, fontSize = 13.sp,
+                        modifier = Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()),
+                    )
+                }
+                Text(
+                    "Si Android muestra un aviso de Google Play Protect, toca «Más detalles» y luego «Instalar sin "
+                        "analizar» (o «Analizar app»). Es la misma app que publicamos en GitHub.",
+                    color = Muted, fontSize = 12.sp,
+                )
+                when (ui) {
+                    is UpdateUi.Downloading -> {
+                        LinearProgressIndicator(
+                            progress = { ui.progress },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            color = Coral, trackColor = Field,
+                        )
+                        Text("Descargando… ${(ui.progress * 100).toInt()} %", color = Muted, fontSize = 13.sp)
+                    }
+                    UpdateUi.NeedsPermission -> Text(
+                        "Android necesita tu permiso para instalar la actualización. Activa «Permitir de esta " +
+                            "fuente», vuelve atrás y toca «Actualizar ahora» otra vez.",
+                        color = CoralSoft, fontSize = 13.sp,
+                    )
+                    is UpdateUi.Failed -> Text(ui.message, color = MaterialColorError, fontSize = 13.sp)
+                    UpdateUi.Idle -> {}
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = !busy, onClick = { vm.startUpdate() }) {
+                Text("Actualizar ahora", color = if (busy) Disabled else Coral, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = { vm.dismissUpdate() }) { Text("Más tarde", color = Muted) }
+        },
+    )
+}
+
+/** Las notas de GitHub vienen en Markdown: se dejan como texto simple. */
+private fun plainNotes(md: String): String =
+    md.lineSequence().map { it.trim().trimStart('#').trim().replace("**", "").replace("`", "") }
+        .filter { it.isNotEmpty() }.joinToString("\n").take(700)
+
+@Composable
+private fun AboutDialog(vm: MainViewModel, onClose: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var msg by remember { mutableStateOf<String?>(null) }
@@ -349,6 +412,10 @@ private fun AboutDialog(onClose: () -> Unit) {
                     color = Muted, fontSize = 12.sp)
                 Text("Las descargas se guardan en Descargas/DescargadorYouTube. Usa la app solo con contenido " +
                     "que tengas derecho a descargar.", color = Muted, fontSize = 12.sp)
+                TextButton(onClick = {
+                    msg = "Buscando…"
+                    vm.checkUpdate(manual = true) { r -> if (r == null) onClose() else msg = r }
+                }) { Text("Buscar actualización de la app", color = Coral) }
                 msg?.let { Text(it, color = CoralSoft) }
             }
         },

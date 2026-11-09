@@ -10,6 +10,7 @@ necesita instalar nada más en el teléfono.
 - Video en la resolución elegida (prefiere H.264 + AAC) o solo audio en MP3 / M4A con título y artista.
 - Cola de descargas (una tras otra), cancelar, y las descargas siguen con la app minimizada (notificación de progreso).
 - Se guarda en `Descargas/DescargadorYouTube` (sin pedir permisos de almacenamiento).
+- **Avisa cuando hay una versión nueva de la app**: al abrirla consulta las Releases de GitHub y, si hay una más reciente, muestra los cambios y un botón «Actualizar ahora» que la descarga, comprueba su SHA-256 (una versión sin hash se rechaza) y abre el instalador de Android. Android solo permite actualizar con la misma clave de firma, así que una APK ajena no se instala encima. La primera vez pide permiso para «instalar apps de esta fuente». Si Google Play Protect muestra «¿Analizar la app?», se puede elegir «Más detalles → Instalar sin analizar».
 - El motor yt-dlp se actualiza solo (como mucho una vez al día) y a mano desde «Acerca de».
 
 - Avisa si el video es **vertical** (Shorts/Reels) u horizontal y lo descarga siempre en su orientación original.
@@ -21,8 +22,8 @@ necesita instalar nada más en el teléfono.
 Descarga el `.apk` de la Release y ábrelo (Android pide permitir «instalar apps de origen desconocido» para el navegador o el
 gestor de archivos). Para casi todos los teléfonos modernos sirve `arm64-v8a`; si dudas, usa el `universal` (más pesado).
 
-> Esta app **no puede estar en Google Play** (su política prohíbe descargar de YouTube): se reparte como APK. No se actualiza
-> sola; para actualizar, instala la APK nueva encima.
+> Esta app **no puede estar en Google Play** (su política prohíbe descargar de YouTube): se reparte como APK. Avisa sola
+> cuando hay una versión nueva (ver arriba); la 0.1.1 y anteriores no tienen ese aviso y se actualizan instalando la APK encima.
 
 ## Compilar
 
