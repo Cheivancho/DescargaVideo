@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.0.2] — sin publicar
+## [2.0.2] — 2026-11-09
 
 ### Corregido
 - Videos verticales (Shorts, 9:16): la calidad se cuenta por el lado corto, como YouTube. Un Short de 1080x1920 aparece como «1080p» (antes «1920p») y al elegir «1080p» —también con los presets— baja el 1080x1920 en H.264 en vez de una versión de 608x1080 en AV1.

@@ -21,7 +21,7 @@ import time
 import urllib.request
 import zipfile
 
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 REPO = "Cheivancho/descargador-youtube"
 
 PORTABLE_FLAG = "portable.flag"
