@@ -1,0 +1,89 @@
+name: Release
+
+# Al empujar un tag vX.Y.Z compila el instalador y crea la Release con el instalador y su SHA-256.
+# (release.ps1 sigue valiendo para publicar desde el PC local.)
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  # Binarios externos con versión y SHA-256 fijados (los hashes salen de las Releases oficiales).
+  FFMPEG_VERSION: "9.0.2"
+  FFMPEG_URL: https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-full_build.zip
+  FFMPEG_SHA256: 759d0a9831c436a0eb331ad36f236c06cb04aaa0005da46571f0e9d3d9206f6b
+  DENO_VERSION: "2.9.8"
+  DENO_URL: https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-pc-windows-msvc.zip
+  DENO_SHA256: cba84b26e0df5ae7f74fc66b86a95b866872a86292ebd84fa1e959927edd93bf
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Comprobar que el tag coincide con VERSION
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path updater.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "El tag ${{ github.ref_name }} no coincide con VERSION = $version en updater.py"
+          }
+
+      - name: Instalar dependencias y comprobar
+        run: |
+          python -m pip install -r requirements-dev.txt
+          ruff check .
+          pytest
+
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Descargar ffmpeg y deno (con SHA-256)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory vendor -Force | Out-Null
+          function Get-Verified($url, $sha, $out) {
+            Invoke-WebRequest $url -OutFile $out
+            $got = (Get-FileHash -Algorithm SHA256 $out).Hash.ToLower()
+            if ($got -ne $sha) { throw "SHA-256 distinto para $url (esperado $sha, obtenido $got)" }
+          }
+          Get-Verified $env:FFMPEG_URL $env:FFMPEG_SHA256 "$env:RUNNER_TEMP\ffmpeg.zip"
+          Expand-Archive "$env:RUNNER_TEMP\ffmpeg.zip" "$env:RUNNER_TEMP\ffmpeg"
+          Copy-Item (Get-ChildItem "$env:RUNNER_TEMP\ffmpeg" -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName vendor\ffmpeg.exe
+          Get-Verified $env:DENO_URL $env:DENO_SHA256 "$env:RUNNER_TEMP\deno.zip"
+          Expand-Archive "$env:RUNNER_TEMP\deno.zip" "$env:RUNNER_TEMP\deno"
+          Copy-Item "$env:RUNNER_TEMP\deno\deno.exe" vendor\deno.exe
+
+      - name: Compilar
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Preparar archivos de la Release
+        shell: pwsh
+        run: |
+          $setup = "output\DescargadorYouTube-Setup.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower()
+          [IO.File]::WriteAllText((Join-Path $PWD "$setup.sha256"), "$hash  DescargadorYouTube-Setup.exe`n", (New-Object Text.UTF8Encoding $false))
+          # ZIP descargable: instalador + Leeme.txt
+          $stage = Join-Path $env:RUNNER_TEMP "zip"
+          New-Item -ItemType Directory $stage | Out-Null
+          Copy-Item $setup, Leeme.txt $stage
+          Compress-Archive -Path "$stage\*" -DestinationPath output\DescargadorYouTube.zip
+
+      - name: Crear la Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" output\DescargadorYouTube-Setup.exe output\DescargadorYouTube-Setup.exe.sha256 output\DescargadorYouTube.zip `
+            --title "Descargador de YouTube ${{ github.ref_name }}" --generate-notes

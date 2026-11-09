@@ -29,6 +29,27 @@
   `vendor\deno.exe` si existe.
 - **DPI:** `SetProcessDpiAwareness` y tamaños de ventana/miniatura/`wraplength` escalados.
 
+### Cambiado (Fase 3)
+- **`app.py` dividido** sin cambios de comportamiento (extracción mecánica por AST y comprobación con descargas reales):
+  `config.py` (rutas, `state.json`, presets, log), `formats.py` (formatos de salida, selector de yt-dlp, filtros de
+  ffmpeg, recorte/escala), `convert.py` (`Converter`: ffmpeg, GPU), `downloader.py` (`Downloader`: trabajos, progreso,
+  cancelación, pausa), `util.py` (formato de texto), `ui.py` (ventana) y `updater.py`. `app.py` queda como punto de
+  entrada (PyInstaller, `--selftest`, DPI).
+- `build.ps1` ya no depende de una ruta fija de Python (`$env:PYTHON` → `py -3.12` → `python`) y busca `ISCC.exe` en el PATH.
+- `.gitignore`: `vendor\*.exe`, `selftest.txt`, cachés de pytest/ruff y `data\` (versión portable).
+- Type hints en las funciones públicas de cada módulo; `ruff` configurado en `pyproject.toml` (línea de 120).
+
+### Añadido (Fase 3)
+- **Tests** (`pytest`, 191): `fmt_*`, `parse_version` y `check_app_update` con respuestas simuladas (incluido el rechazo sin
+  hash), descarga del instalador verificada, extracción segura de wheels, reintento del motor tras un fallo, selector de
+  formato (video individual, playlist y FPS), filtros de ffmpeg (escala/pad/crop), parser de tiempos del recorte,
+  detección de `&list=`, progreso global, mensajes de error, consistencia `OUT_FORMATS`/`RECODE_SPECS` y migración de
+  `state.json`/`presets.json` viejos o corruptos.
+- `requirements.txt` (versiones fijas), `requirements-dev.txt` (pytest, ruff) y `pyproject.toml`.
+- **CI** (`.github/workflows`): `ci.yml` (ruff + pytest en cada push/PR) y `release.yml` (al empujar un tag `v*`: comprueba que
+  coincide con `VERSION`, instala Inno Setup con Chocolatey, descarga **ffmpeg 9.0.2 (gyan.dev, full_build)** y **deno 2.9.8**
+  con SHA-256 fijado, compila con `build.ps1` y crea la Release con instalador, `.sha256` y `.zip`).
+
 ### Añadido (Fase 2)
 - **Comodidad:** botón «Abrir carpeta», ajustes recordados en `state.json` (carpeta, formato, audio, tamaño de
   ventana y el resto de opciones), enlace de YouTube pegado desde el portapapeles al abrir/enfocar, menú **Ayuda**
@@ -73,7 +94,13 @@
 - Subtítulos: se piden también los automáticos (`writeautomaticsub`) limitados a los idiomas elegidos.
 
 ### Pendiente / no verificado
-- Encoders QSV y AMF: la prueba de 1 s los descarta/acepta correctamente, pero solo se pudo comprobar NVENC (GPU NVIDIA
+- **Los workflows de GitHub Actions no se han ejecutado** (no pueden probarse en local): solo se validó su sintaxis YAML.
+  Las URLs y los SHA-256 de ffmpeg y deno se tomaron de las Releases oficiales con la API de GitHub.
+- `build.ps1` se ejecutó en una copia temporal del repositorio (para no tocar `dist\`, `build\`, `output\`): genera el
+  instalador (80,7 MB) y el `.exe` compilado arranca (`--selftest`) con `yt_dlp_ejs` incluido. Esa compilación fue sin
+  `vendor\deno.exe` (no está en el equipo de desarrollo).
+- Reutilizar el análisis para descargar (`process_ie_result`) falla con HTTP 403 en algunos casos (p. ej. el trabajo de
+  audio); está previsto y se vuelve a extraer, pero la descarga tarda más.- Encoders QSV y AMF: la prueba de 1 s los descarta/acepta correctamente, pero solo se pudo comprobar NVENC (GPU NVIDIA
   del equipo de desarrollo); los argumentos de QSV/AMF no se han probado con hardware real.
 - No se probó la lectura real de cookies de Firefox/Chrome/Edge (se evitó acceder a los perfiles del usuario).
 - No se ha comprobado un yt-dlp descargado de PyPI de extremo a extremo en el `.exe` empaquetado (solo la lógica).

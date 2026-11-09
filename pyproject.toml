@@ -1,0 +1,19 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["build", "dist", "output", "vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "RUF100"]
+ignore = [
+    "B008",  # llamadas en argumentos por defecto: no se usan patrones problemáticos
+    "E741",
+    "RUF100",  # los «# noqa: BLE001» documentan los except amplios aunque BLE no esté activo
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "config", "convert", "downloader", "formats", "ui", "updater", "util"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

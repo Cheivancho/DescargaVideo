@@ -1,0 +1,5 @@
+# Dependencias de ejecución (versiones fijas: son las que se empaquetan en el .exe)
+yt-dlp==2026.10.26
+yt-dlp-ejs==0.8.0      # scripts JS que yt-dlp necesita para YouTube; la versión la fija cada yt-dlp
+Pillow==13.0.0
+pyinstaller==6.22.3    # solo para compilar (build.ps1)

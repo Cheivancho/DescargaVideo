@@ -1,7 +1,14 @@
 build/
 dist/
 output/
-vendor/
+vendor/*.exe
+vendor/*.zip
+vendor/*.7z
 *.spec
 __pycache__/
 *.pyc
+selftest.txt
+.pytest_cache/
+.ruff_cache/
+# Carpeta de datos de la versión portable (junto al ejecutable)
+data/
