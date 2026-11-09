@@ -588,20 +588,27 @@ class App(tk.Tk):
         self.status.set("Buscando actualizaciones…")
 
         def work():
+            upd, v, problems = None, None, []
             try:
-                upd = updater.check_app_update()
+                upd = updater.check_app_update(raise_on_reject=True)
+            except Exception as e:  # noqa: BLE001  un fallo aquí no debe impedir buscar el motor
+                log.warning("Búsqueda manual de la app fallida", exc_info=True)
+                problems.append(str(e) if isinstance(e, updater.UpdateRejected)
+                                else f"No se pudo comprobar la app: {e}")
+            try:
                 v = updater.background_ytdlp_update(force=True)
-                if v:
-                    self.q.put(("engine", v))
-                if upd:
-                    self.q.put(("app_update", upd))
-                elif v:
-                    self.q.put(("msgbox", "Actualizaciones", f"Motor yt-dlp {v} descargado (se aplica al reiniciar)."))
-                else:
-                    self.q.put(("msgbox", "Actualizaciones", "Todo está al día."))
             except Exception as e:  # noqa: BLE001
-                log.warning("Búsqueda manual de actualizaciones fallida", exc_info=True)
-                self.q.put(("msgbox", "Actualizaciones", f"No se pudo comprobar: {e}"))
+                log.warning("Búsqueda manual del motor fallida", exc_info=True)
+                problems.append(f"No se pudo comprobar el motor yt-dlp: {e}")
+            if v:
+                self.q.put(("engine", v))
+            if upd:
+                self.q.put(("app_update", upd))
+            lines = ([f"Motor yt-dlp {v} descargado (se aplica al reiniciar)."] if v else []) + problems
+            if lines:
+                self.q.put(("msgbox", "Actualizaciones", "\n".join(lines)))
+            elif not upd:
+                self.q.put(("msgbox", "Actualizaciones", "Todo está al día."))
         threading.Thread(target=work, daemon=True).start()
 
     def _redetect_gpu(self) -> None:
@@ -868,7 +875,12 @@ class App(tk.Tk):
         if not spec["heights"] and not spec["audio"]:
             messagebox.showwarning("Nada seleccionado", "Marca al menos una resolución o el audio.")
             return None
-        os.makedirs(spec["out_dir"], exist_ok=True)
+        try:
+            os.makedirs(spec["out_dir"], exist_ok=True)
+        except (OSError, ValueError) as e:
+            messagebox.showerror("Carpeta de destino",
+                                 f"No se puede usar la carpeta de destino:\n{spec['out_dir']}\n\n{e}")
+            return None
         return {"url": self.analyzed_url, "is_playlist": self.is_playlist, "info": self.analyzed_info,
                 "analyzed_at": self.analyzed_at, "title": self.title_lbl.cget("text"), "spec": spec}
 

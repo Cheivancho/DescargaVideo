@@ -176,7 +176,8 @@ def download_ytdlp_next() -> str | None:
     with _get("https://pypi.org/pypi/yt-dlp/json", 8) as r:
         meta = json.load(r)
     latest = meta["info"]["version"]
-    current = pending_update_version() or installed_update_version() or _bundled_ytdlp_version()
+    known = [v for v in (pending_update_version(), installed_update_version(), _bundled_ytdlp_version()) if v]
+    current = max(known, key=parse_version) if known else None
     if current and parse_version(latest) <= parse_version(current):
         return None
     data = _fetch_wheel(meta)
@@ -283,7 +284,11 @@ def _asset_sha256(asset: dict, assets: list) -> str | None:
     return None
 
 
-def check_app_update() -> dict | None:
+class UpdateRejected(Exception):
+    """Hay una versión nueva pero se rechaza (p. ej. no publica SHA-256)."""
+
+
+def check_app_update(raise_on_reject: bool = False) -> dict | None:
     """Devuelve dict(version, notes, url, size, sha256) si hay una versión nueva con hash; si no, None.
 
     Una versión nueva SIN SHA-256 disponible se rechaza (no se ofrece ni se ejecuta).
@@ -300,6 +305,8 @@ def check_app_update() -> dict | None:
     sha = _asset_sha256(asset, assets)
     if not sha:
         log.warning("La versión %s no publica SHA-256: actualización rechazada", tag)
+        if raise_on_reject:
+            raise UpdateRejected(f"La versión {tag} no publica SHA-256 y se rechaza por seguridad.")
         return None
     return {"version": tag.lstrip("v"), "notes": (rel.get("body") or "").strip(),
             "url": asset["browser_download_url"], "size": asset.get("size", 0), "sha256": sha}
@@ -312,18 +319,22 @@ def download_installer(update: dict, progress=None) -> str:
     d = tempfile.mkdtemp(prefix="DescargadorYouTube-update-")
     path = os.path.join(d, SETUP_NAME)
     h = hashlib.sha256()
-    with _get(update["url"], 30) as r, open(path, "wb") as f:
-        total = int(r.headers.get("Content-Length") or update.get("size") or 0)
-        done = 0
-        while True:
-            chunk = r.read(256 * 1024)
-            if not chunk:
-                break
-            f.write(chunk)
-            h.update(chunk)
-            done += len(chunk)
-            if progress and total:
-                progress(done * 100 / total)
+    try:
+        with _get(update["url"], 30) as r, open(path, "wb") as f:
+            total = int(r.headers.get("Content-Length") or update.get("size") or 0)
+            done = 0
+            while True:
+                chunk = r.read(256 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                h.update(chunk)
+                done += len(chunk)
+                if progress and total:
+                    progress(done * 100 / total)
+    except BaseException:  # descarga cortada: no dejar la carpeta parcial en %TEMP%
+        shutil.rmtree(d, ignore_errors=True)
+        raise
     if h.hexdigest().lower() != update["sha256"].lower():
         shutil.rmtree(d, ignore_errors=True)
         raise ValueError("El instalador descargado está dañado (hash incorrecto).")

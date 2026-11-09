@@ -207,7 +207,11 @@ class Downloader:
         self.failed_items = []  # ítems con algún trabajo fallido (la cola los conserva para reintentar)
         self.cur_spec = {}
         self.last_error = ""
-        self.converter = Converter(lambda: self.cancel, emit)
+        self.converter = Converter(lambda: self.cancel, emit, lambda: self.paused)
+
+    def add_error(self, text: str) -> None:
+        """Acumula el detalle de cada fallo (no solo el último) para 'Copiar error'."""
+        self.last_error = f"{self.last_error}\n\n{text}" if self.last_error else text
 
     def _post_video(self, path: str) -> None:
         self.converter.post_video(path, self.cur_spec)
@@ -334,7 +338,7 @@ class Downloader:
                     if self.cancel:
                         raise yt_dlp.utils.DownloadCancelled("Cancelado por el usuario") from None
                     log.exception("Falló el trabajo %s de %s", label, job.item["url"])
-                    self.last_error = f"Trabajo {label} de {job.item['url']}\n{traceback.format_exc()}"
+                    self.add_error(f"Trabajo {label} de {job.item['url']}\n{traceback.format_exc()}")
                     failed.append(f"{label}: {friendly_error(str(e), self.cookie_browser)[:200]}")
                     if not any(job.item is f for f in self.failed_items):
                         self.failed_items.append(job.item)
@@ -349,7 +353,7 @@ class Downloader:
             self.emit(("done", "Descarga cancelada.", False))
         except Exception as e:  # noqa: BLE001
             log.exception("Error en la descarga")
-            self.last_error = f"Descarga de {url}\n{traceback.format_exc()}"
+            self.add_error(f"Descarga de {url}\n{traceback.format_exc()}")
             self.emit(("done", f"Error: {friendly_error(str(e), self.cookie_browser)}", False))
         finally:
             self.tracker = None

@@ -74,6 +74,12 @@
 - Un preset ya no impone sus resoluciones a todos los análisis posteriores.
 - La opción de GPU guardada se recupera cuando termina la detección; las opciones de GPU que dejan de funcionar se quitan.
 - El mensaje final indica "terminada con errores" si algún trabajo falló.
+- "Copiar error" incluye el detalle de todos los fallos, no solo el último.
+- Pausar también congela ffmpeg durante la conversión (antes seguía hasta terminar); probado con una codificación real.
+- Una carpeta de destino inválida muestra un mensaje en lugar de no hacer nada.
+- "Buscar actualizaciones" busca el motor aunque falle la consulta de la app, y avisa si una versión se rechaza por no tener SHA-256.
+- Si se corta la descarga de una actualización de la app, se borra la carpeta temporal parcial.
+- Al decidir si hay un yt-dlp más nuevo se compara con la versión más alta entre incluida, instalada y pendiente.
 
 ### Cambiado
 - **`app.py` dividido** sin cambios de comportamiento (extracción mecánica por AST y comprobación con descargas reales):

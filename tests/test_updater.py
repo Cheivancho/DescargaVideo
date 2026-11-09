@@ -242,3 +242,28 @@ def test_data_dir_portable_con_flag(tmp_path):
 def test_el_flag_debe_ser_un_archivo(tmp_path):
     (tmp_path / updater.PORTABLE_FLAG).mkdir()  # una carpeta con ese nombre no activa el modo portable
     assert updater.resolve_data_dir(str(tmp_path), str(tmp_path / "local")) != str(tmp_path / "data")
+
+
+def test_update_sin_hash_en_modo_estricto_avisa(monkeypatch):
+    monkeypatch.setattr(updater, "_get", fake_get(release()))
+    with pytest.raises(updater.UpdateRejected):
+        updater.check_app_update(raise_on_reject=True)
+
+
+def test_descarga_cortada_no_deja_carpeta_temporal(monkeypatch, tmp_path):
+    class Cortada:
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, n):
+            raise OSError("red caída")
+    monkeypatch.setattr(updater, "_get", lambda *a, **k: Cortada())
+    monkeypatch.setattr(updater.tempfile, "tempdir", str(tmp_path))
+    with pytest.raises(OSError):
+        updater.download_installer({"url": "x", "sha256": "ab"})
+    assert list(tmp_path.iterdir()) == []

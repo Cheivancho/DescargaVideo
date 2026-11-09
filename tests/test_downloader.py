@@ -175,3 +175,10 @@ def test_is_finished_otros_formatos_no_inspeccionan():
     d.cur_spec = {"kind": "prores_std"}
     d.converter.probe_codecs = lambda path: pytest.fail("no debe inspeccionar")
     assert d.is_finished("x.mov", ".mov") is True
+
+
+def test_errores_se_acumulan():
+    d = downloader.Downloader(lambda m: None)
+    d.add_error("primero")
+    d.add_error("segundo")
+    assert "primero" in d.last_error and "segundo" in d.last_error

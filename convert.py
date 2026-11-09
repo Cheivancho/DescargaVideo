@@ -87,10 +87,23 @@ def detect_gpu_encoders(force: bool = False) -> dict:
 class Converter:
     """Ejecuta ffmpeg de forma cancelable. 'emit' recibe los mensajes de estado para la interfaz."""
 
-    def __init__(self, is_cancelled: Callable[[], bool], emit: Callable[[tuple], None]) -> None:
+    def __init__(self, is_cancelled: Callable[[], bool], emit: Callable[[tuple], None],
+                 is_paused: Callable[[], bool] = lambda: False) -> None:
         self.is_cancelled = is_cancelled
+        self.is_paused = is_paused
         self.emit = emit
         self.proc = None  # proceso de ffmpeg en curso
+
+    @staticmethod
+    def set_suspended(proc: subprocess.Popen, suspend: bool) -> bool:
+        """Congela o reanuda el proceso de ffmpeg (Windows: NtSuspendProcess/NtResumeProcess)."""
+        try:
+            import ctypes
+            fn = ctypes.windll.ntdll.NtSuspendProcess if suspend else ctypes.windll.ntdll.NtResumeProcess
+            return fn(ctypes.c_void_p(int(proc._handle))) == 0  # noqa: SLF001
+        except Exception:  # noqa: BLE001
+            log.warning("No se pudo %s ffmpeg", "pausar" if suspend else "reanudar", exc_info=True)
+            return False
 
     def kill(self, proc: subprocess.Popen) -> None:
         """Termina ffmpeg; si no responde en unos segundos, lo mata."""
@@ -126,13 +139,23 @@ class Converter:
             return False, str(e)
         self.proc = proc
         err = ""
+        suspended = False
         try:
             while True:
                 try:
                     _, err = proc.communicate(timeout=0.3)
                     break
                 except subprocess.TimeoutExpired:
+                    if self.is_paused() and not self.is_cancelled() and not suspended:
+                        suspended = self.set_suspended(proc, True)
+                        if suspended:
+                            self.emit(("status", "⏸ Pausado durante la conversión. Pulsa Reanudar."))
+                    elif suspended and not self.is_paused():
+                        suspended = not self.set_suspended(proc, False)
+                        self.emit(("status", "Reanudando conversión…"))
                     if self.is_cancelled():
+                        if suspended:
+                            self.set_suspended(proc, False)
                         self.kill(proc)
                         self.remove_quietly(dest)
                         raise DownloadCancelled("Cancelado durante la conversión") from None
