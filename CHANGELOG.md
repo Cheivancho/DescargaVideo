@@ -4,7 +4,7 @@
 
 - Aviso de actualización: al abrir la app avisa si hay una versión nueva en GitHub y permite descargarla e instalarla (con comprobación de SHA-256). Incluye un botón «Buscar actualización de la app» en «Acerca de».
 
-## [2.1.1] — 2026-11-10 (Android 0.2.1)
+## [2.1.1] — sin publicar (Android 0.2.1)
 
 ### Cambiado
 - El repositorio de GitHub pasó a llamarse **DescargaVideo** (github.com/Cheivancho/DescargaVideo) y la app ya apunta a la
