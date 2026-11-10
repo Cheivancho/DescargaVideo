@@ -23,7 +23,7 @@ import zipfile
 
 import branding
 
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 REPO = branding.REPO
 
 PORTABLE_FLAG = "portable.flag"

@@ -4,6 +4,14 @@
 
 - Aviso de actualización: al abrir la app avisa si hay una versión nueva en GitHub y permite descargarla e instalarla (con comprobación de SHA-256). Incluye un botón «Buscar actualización de la app» en «Acerca de».
 
+## [2.1.1] — 2026-11-10 (Android 0.2.1)
+
+### Cambiado
+- El repositorio de GitHub pasó a llamarse **DescargaVideo** (github.com/Cheivancho/DescargaVideo) y la app ya apunta a la
+  dirección nueva (`REPO` en `branding.py` y en `Updater.kt` de Android). Se actualizaron README, Leeme y docs.
+- Las versiones ya instaladas siguen encontrando las actualizaciones: GitHub redirige el nombre anterior del repositorio
+  (comprobado con el actualizador de la 2.0.1 y 2.0.2 y con la conexión de Java que usa Android).
+
 ## [2.1.0] — 2026-11-09 — Nuevo nombre: DescargaVideo (Android 0.2.0)
 
 ### Cambiado
@@ -25,8 +33,7 @@
 - El `AppId` del instalador no cambia: el instalador nuevo reemplaza al viejo en vez de instalarse al lado.
 - Quien ya tenía la app conserva su carpeta de instalación anterior (Inno Setup reutiliza la ruta por `AppId`); las
   instalaciones nuevas usan `%LOCALAPPDATA%\Programs\DescargaVideo`.
-- El repositorio de GitHub sigue llamándose `descargador-youtube`: así las versiones ya instaladas encuentran las
-  actualizaciones. Se puede renombrar después (GitHub redirige el nombre viejo) y cambiar `REPO` en `branding.py`.
+- El repositorio de GitHub se mantuvo con su nombre anterior en esta versión para no cortar las actualizaciones; se renombró en la 2.1.1.
 - El actualizador sigue buscando el instalador por `endswith("setup.exe")`, por lo que sirve con ambos nombres.
 
 ### Pendiente / no verificado

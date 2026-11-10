@@ -94,4 +94,4 @@ Proyectos como este pueden recibir reclamos de retirada (takedown) y el
 sitio donde se publica podría desaparecer sin aviso.
 
 Más información y código fuente:
-https://github.com/Cheivancho/descargador-youtube
+https://github.com/Cheivancho/DescargaVideo

@@ -9,9 +9,9 @@ APP_SLUG = "DescargaVideo"  # sin espacios ni tildes: ejecutable, carpetas y nom
 EXE_NAME = APP_SLUG
 PUBLISHER = "Cheivancho"
 
-# Repositorio donde se publican las Releases (y de donde la app busca actualizaciones). GitHub redirige el nombre
-# viejo si el repositorio se renombra, así que las versiones ya instaladas siguen encontrándolo.
-REPO = "Cheivancho/descargador-youtube"
+# Repositorio donde se publican las Releases (y de donde la app busca actualizaciones). Las versiones instaladas
+# antes del cambio de nombre del repositorio siguen encontrándolo: GitHub redirige el nombre anterior.
+REPO = "Cheivancho/DescargaVideo"
 
 DATA_DIRNAME = APP_SLUG  # %LOCALAPPDATA%\DescargaVideo
 LEGACY_DATA_DIRNAME = "DescargadorYouTube"  # nombre anterior de la carpeta de datos (se copia al arrancar)

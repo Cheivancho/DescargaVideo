@@ -7,7 +7,7 @@ Con un manifiesto en el repositorio de la comunidad, cualquiera podrá instalar 
 ## Requisitos
 
 - Una Release publicada en GitHub (`vX.Y.Z`) con `DescargaVideo-Setup.exe`. La URL del instalador debe ser
-  **estable y versionada**: `https://github.com/Cheivancho/descargador-youtube/releases/download/vX.Y.Z/DescargaVideo-Setup.exe`.
+  **estable y versionada**: `https://github.com/Cheivancho/DescargaVideo/releases/download/vX.Y.Z/DescargaVideo-Setup.exe`.
 - [`wingetcreate`](https://github.com/microsoft/winget-create): `winget install wingetcreate`.
 - Una cuenta de GitHub con `gh` configurado, o un token con permisos para abrir la PR.
 - Recomendado: instalador **firmado** (ver `FIRMA.md`); sin firma, la validación automática puede mostrar advertencias de
@@ -19,7 +19,7 @@ Con un manifiesto en el repositorio de la comunidad, cualquiera podrá instalar 
 2. Crea el manifiesto:
 
    ```powershell
-   wingetcreate new https://github.com/Cheivancho/descargador-youtube/releases/download/v2.1.0/DescargaVideo-Setup.exe
+   wingetcreate new https://github.com/Cheivancho/DescargaVideo/releases/download/v2.1.0/DescargaVideo-Setup.exe
    ```
 
    `wingetcreate` descarga el instalador, calcula su **SHA-256** y te pregunta los datos. Valores sugeridos:
@@ -53,7 +53,7 @@ Cada versión nueva necesita su propia PR, pero es una sola orden:
 
 ```powershell
 wingetcreate update Cheivancho.DescargaVideo --version 2.1.0 `
-  --urls https://github.com/Cheivancho/descargador-youtube/releases/download/v2.1.0/DescargaVideo-Setup.exe `
+  --urls https://github.com/Cheivancho/DescargaVideo/releases/download/v2.1.0/DescargaVideo-Setup.exe `
   --submit
 ```
 

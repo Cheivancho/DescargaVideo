@@ -33,7 +33,7 @@ data class UpdateInfo(
  * con la misma clave que la instalada, así que una APK ajena no se puede instalar encima.
  */
 object Updater {
-    private const val REPO = "Cheivancho/descargador-youtube"
+    private const val REPO = "Cheivancho/DescargaVideo"
     private const val TAG_PREFIX = "android-v"
     private const val SUMS_NAME = "SHA256SUMS.txt"
 

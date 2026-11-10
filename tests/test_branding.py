@@ -78,6 +78,20 @@ def test_no_queda_el_nombre_viejo_en_codigo_ni_scripts():
     assert branding.LEGACY_DATA_DIRNAME == "DescargadorYouTube"
 
 
-def test_el_repositorio_sigue_siendo_el_de_las_releases_actuales():
-    # Mientras el repo no se renombre en GitHub, las versiones instaladas buscan actualizaciones aquí.
-    assert branding.REPO == "Cheivancho/descargador-youtube"
+def test_el_repositorio_tiene_el_nombre_nuevo():
+    assert branding.REPO == "Cheivancho/DescargaVideo"
+
+
+def test_el_nombre_viejo_del_repositorio_no_aparece_en_el_codigo_ni_en_la_documentacion():
+    """El nombre anterior del repositorio solo sigue existiendo como redirección de GitHub, no en nuestros archivos."""
+    viejo = "descargador" + "-youtube"
+    archivos = ["README.md", "Leeme.txt", "CHANGELOG.md", "branding.py", "updater.py", "installer.iss", "build.ps1",
+                "release.ps1", os.path.join("android", "README.md"),
+                os.path.join(".github", "workflows", "release.yml"),
+                os.path.join("android", "app", "src", "main", "java", "com", "cheivancho", "descargador", "Updater.kt")]
+    docs = os.path.join(ROOT, "docs")
+    archivos += [os.path.join("docs", n) for n in os.listdir(docs) if n.endswith((".md", ".txt"))]
+    for a in archivos:
+        assert viejo not in leer(a).lower(), f"{a} todavía menciona el nombre viejo del repositorio"
+    assert "Cheivancho/DescargaVideo" in leer(
+        os.path.join("android", "app", "src", "main", "java", "com", "cheivancho", "descargador", "Updater.kt"))
