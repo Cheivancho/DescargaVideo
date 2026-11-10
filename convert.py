@@ -22,7 +22,7 @@ from formats import (
     build_video_filter,
 )
 
-log = logging.getLogger("descargador")
+log = logging.getLogger("descargavideo")
 
 
 def _ffmpeg_signature() -> str:

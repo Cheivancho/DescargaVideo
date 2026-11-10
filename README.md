@@ -1,4 +1,6 @@
-# Descargador de YouTube
+# DescargaVideo
+
+> Antes se llamaba «Descargador de YouTube». Es el mismo programa: al actualizar se conservan tus ajustes, presets y el motor descargado (los datos pasan a `%LOCALAPPDATA%\DescargaVideo`; la carpeta vieja no se borra).
 
 Aplicación de escritorio para Windows con interfaz oscura para descargar videos de YouTube en **todas las
 resoluciones que el video tenga disponibles** (144p hasta 4K/8K), con salida lista para edición y pantallas LED
@@ -9,9 +11,9 @@ características del video.
 
 1. Entra en la sección **[Releases](../../releases/latest)** de este repositorio.
 2. Elige una de las descargas:
-   - **`DescargadorYouTube.zip`**: trae el instalador y un `Leeme.txt`. Descomprímelo y abre
-     `DescargadorYouTube-Setup.exe` (Siguiente → Instalar). También puedes bajar el `.exe` suelto.
-   - **`DescargadorYouTube-portable.zip`**: sin instalación (ver [Versión portable](#versión-portable)).
+   - **`DescargaVideo.zip`**: trae el instalador y un `Leeme.txt`. Descomprímelo y abre
+     `DescargaVideo-Setup.exe` (Siguiente → Instalar). También puedes bajar el `.exe` suelto.
+   - **`DescargaVideo-portable.zip`**: sin instalación (ver [Versión portable](#versión-portable)).
 
 > **Aviso de Windows:** como el instalador no está firmado digitalmente, Windows puede mostrar
 > *"Windows protegió su PC"*. Pulsa **Más información → Ejecutar de todas formas**. Es normal en programas pequeños e
@@ -110,7 +112,7 @@ pegarlo en un informe.
 
 ## Versión portable
 
-`DescargadorYouTube-portable.zip` se descomprime en cualquier carpeta (por ejemplo un USB) y se ejecuta sin instalar. Un
+`DescargaVideo-portable.zip` se descomprime en cualquier carpeta (por ejemplo un USB) y se ejecuta sin instalar. Un
 archivo `portable.flag` junto al ejecutable hace que **todos los datos** (ajustes, presets, log y motor yt-dlp) vivan en la
 carpeta `data\` de al lado en lugar de `%LOCALAPPDATA%`. Trae `ffmpeg.exe` (y `deno.exe` si la Release lo incluye).
 La versión portable **no se actualiza sola**: cuando hay una versión nueva la app lo indica arriba a la derecha y
@@ -125,7 +127,7 @@ de la app y añadir un archivo vacío llamado `portable.flag`.
   espera a la red al abrirse: el motor nuevo se descarga y **se aplica al reiniciar la app**.
 - Necesita conexión a internet para actualizar; sin ella la app sigue funcionando.
 - **Verificación del instalador:** la app solo se actualiza si la Release publica el SHA-256 del instalador (campo `digest`
-  del asset o el archivo `DescargadorYouTube-Setup.exe.sha256`); sin hash, la actualización se **rechaza**. Ojo: el hash
+  del asset o el archivo `DescargaVideo-Setup.exe.sha256`); sin hash, la actualización se **rechaza**. Ojo: el hash
   protege contra descargas **corruptas**, no contra una cuenta de GitHub comprometida (quien publicara un instalador
   malicioso publicaría también su hash). Para eso sirve la firma digital ([`docs/FIRMA.md`](docs/FIRMA.md)).
 
@@ -168,7 +170,7 @@ python app.py --selftest selftest.txt                                         # 
 ```
 
 `build.ps1` busca Python (variable `PYTHON` → `py -3.12` → `python`) e Inno Setup (`ISCC.exe` en el `PATH` o en las rutas
-habituales) y genera `output\DescargadorYouTube-Setup.exe`.
+habituales) y genera `output\DescargaVideo-Setup.exe`.
 
 ### Publicar una versión
 

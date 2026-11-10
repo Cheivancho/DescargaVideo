@@ -76,7 +76,7 @@ class DownloadService : Service() {
         }
         val n = NotificationCompat.Builder(this, CHANNEL_DONE)
             .setSmallIcon(R.drawable.ic_stat_download)
-            .setContentTitle("Descargador de YouTube")
+            .setContentTitle("DescargaVideo")
             .setContentText(text)
             .setContentIntent(openAppIntent())
             .setAutoCancel(true)

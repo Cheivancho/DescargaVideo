@@ -20,7 +20,7 @@ from formats import (
     SUBS_MODES,
 )
 
-log = logging.getLogger("descargador")
+log = logging.getLogger("descargavideo")
 
 # Carpeta del ejecutable (o del código) y de los recursos empaquetados por PyInstaller
 APP_DIR = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))

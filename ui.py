@@ -16,6 +16,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import yt_dlp
 from PIL import Image, ImageOps, ImageTk
 
+import branding
 import updater
 from config import (
     DEFAULT_SETTINGS,
@@ -60,7 +61,7 @@ from formats import (
 )
 from util import fmt_date, fmt_dur, fmt_num, short_title
 
-log = logging.getLogger("descargador")
+log = logging.getLogger("descargavideo")
 
 
 # Paleta
@@ -151,7 +152,7 @@ class App(tk.Tk):
         super().__init__()
         self.ui = max(self.winfo_fpixels("1i") / 96, 1.0)  # factor de escala por DPI
         self.thumb_w, self.thumb_h = self.px(THUMB_W), self.px(THUMB_H)
-        self.title("Descargador de YouTube")
+        self.title(branding.APP_NAME)
         self.geometry(f"{self.px(1060)}x{self.px(790)}")
         self.minsize(self.px(1000), self.px(760))
         self.configure(bg=BG)
@@ -365,7 +366,7 @@ class App(tk.Tk):
         head = tk.Frame(self, bg=BG)
         head.pack(fill="x", padx=24, pady=(20, 8))
         self._label(head, "▶", 18, True, CORAL).pack(side="left")
-        self._label(head, "  Descargador de YouTube", 18, True).pack(side="left")
+        self._label(head, f"  {branding.APP_NAME}", 18, True).pack(side="left")
         self._label(head, f"v{updater.VERSION}", 9, False, MUTED).pack(side="left", padx=(10, 0), pady=(8, 0))
         self.btn_help = self._btn(head, "Ayuda ▾", self._show_help_menu)
         self.btn_help.config(pady=3, padx=10)
@@ -667,7 +668,7 @@ class App(tk.Tk):
 
     def _about(self) -> None:
         pend = updater.pending_update_version()
-        text = f"Descargador de YouTube v{updater.VERSION}\nyt-dlp {yt_dlp.version.__version__}"
+        text = f"{branding.APP_NAME} v{updater.VERSION}\nyt-dlp {yt_dlp.version.__version__}"
         if pend:
             text += f"\n(motor {pend} listo; se aplica al reiniciar)"
         text += f"\nMotor JavaScript: {', '.join(self.dl.js_runtimes) or 'ninguno'}"

@@ -88,26 +88,26 @@ jobs:
       - name: Preparar archivos de la Release
         shell: pwsh
         run: |
-          $setup = "output\DescargadorYouTube-Setup.exe"
+          $setup = "output\DescargaVideo-Setup.exe"
           $hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower()
-          [IO.File]::WriteAllText((Join-Path $PWD "$setup.sha256"), "$hash  DescargadorYouTube-Setup.exe`n", (New-Object Text.UTF8Encoding $false))
+          [IO.File]::WriteAllText((Join-Path $PWD "$setup.sha256"), "$hash  DescargaVideo-Setup.exe`n", (New-Object Text.UTF8Encoding $false))
           # ZIP descargable: instalador + Leeme.txt
           $stage = Join-Path $env:RUNNER_TEMP "zip"
           New-Item -ItemType Directory $stage | Out-Null
           Copy-Item $setup, Leeme.txt $stage
-          Compress-Archive -Path "$stage\*" -DestinationPath output\DescargadorYouTube.zip
+          Compress-Archive -Path "$stage\*" -DestinationPath output\DescargaVideo.zip
           # Versión portable: dist\ + ffmpeg + deno + portable.flag (guarda sus datos en .\data)
-          $papp = Join-Path $env:RUNNER_TEMP "portable\DescargadorYouTube"
+          $papp = Join-Path $env:RUNNER_TEMP "portable\DescargaVideo"
           New-Item -ItemType Directory $papp -Force | Out-Null
-          Copy-Item "dist\DescargadorYouTube\*" $papp -Recurse
+          Copy-Item "dist\DescargaVideo\*" $papp -Recurse
           Copy-Item vendor\ffmpeg.exe, vendor\deno.exe, Leeme.txt $papp
           New-Item -ItemType File (Join-Path $papp "portable.flag") | Out-Null
-          Compress-Archive -Path $papp -DestinationPath output\DescargadorYouTube-portable.zip
+          Compress-Archive -Path $papp -DestinationPath output\DescargaVideo-portable.zip
 
       - name: Crear la Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" output\DescargadorYouTube-Setup.exe output\DescargadorYouTube-Setup.exe.sha256 output\DescargadorYouTube.zip output\DescargadorYouTube-portable.zip `
-            --title "Descargador de YouTube ${{ github.ref_name }}" --generate-notes
+          gh release create "${{ github.ref_name }}" output\DescargaVideo-Setup.exe output\DescargaVideo-Setup.exe.sha256 output\DescargaVideo.zip output\DescargaVideo-portable.zip `
+            --title "DescargaVideo ${{ github.ref_name }}" --generate-notes

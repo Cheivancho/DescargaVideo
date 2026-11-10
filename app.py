@@ -1,4 +1,4 @@
-"""Descargador de YouTube con interfaz oscura (tkinter + yt-dlp).
+"""DescargaVideo: descargador de videos con interfaz oscura (tkinter + yt-dlp).
 
 - Detecta todas las resoluciones realmente disponibles del video.
 - Descarga una, varias o todas; soporta playlists, audio, subtítulos, recortes, escala y conversión a ProRes/HAP/etc.
@@ -11,8 +11,10 @@ downloader, util, ui y updater.
 import shutil
 import sys
 
+import branding
 import updater
 
+updater.migrate_legacy_data_dir()  # copia los datos del nombre anterior; debe ir antes que cualquier otra cosa
 updater.prepare_ytdlp()  # solo aplica lo ya descargado (local, sin red); debe ir antes de importar yt_dlp
 
 import yt_dlp  # noqa: E402
@@ -37,7 +39,8 @@ def selftest(path: str) -> None:
         _ejs = "NO DISPONIBLE"
     with open(path, "w", encoding="utf-8") as _f:
         _f.writelines(line + "\n" for line in (
-            f"app={updater.VERSION}", f"yt_dlp={yt_dlp.version.__version__}", f"file={yt_dlp.__file__}",
+            f"name={branding.APP_NAME}", f"app={updater.VERSION}", f"yt_dlp={yt_dlp.version.__version__}",
+            f"file={yt_dlp.__file__}",
             f"extractor={_yt.__file__}", f"yt_dlp_ejs={_ejs}",
             f"js_runtime={list(find_js_runtimes()) or 'NINGUNO'}", f"ffmpeg={shutil.which('ffmpeg')}",
             f"portable={updater.IS_PORTABLE}", f"data_dir={updater.DATA_DIR}"))

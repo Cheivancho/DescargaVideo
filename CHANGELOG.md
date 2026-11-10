@@ -4,6 +4,36 @@
 
 - Aviso de actualización: al abrir la app avisa si hay una versión nueva en GitHub y permite descargarla e instalarla (con comprobación de SHA-256). Incluye un botón «Buscar actualización de la app» en «Acerca de».
 
+## [2.1.0] — 2026-11-09 — Nuevo nombre: DescargaVideo (Android 0.2.0)
+
+### Cambiado
+- **La app pasa a llamarse DescargaVideo** (antes «Descargador de YouTube»), en PC y en Android: ventana, instalador,
+  accesos directos, ejecutable (`DescargaVideo.exe`), nombres de los archivos de la Release (`DescargaVideo-Setup.exe`,
+  `DescargaVideo.zip`, `DescargaVideo-portable.zip`), documentación y textos de Android.
+- El nombre vive en un solo archivo, `branding.py`; `tests/test_branding.py` comprueba que el instalador, los scripts y el CI
+  coincidan.
+- Android: cambia el nombre visible y la carpeta de descargas (`Descargas/DescargaVideo`). El identificador del paquete y la
+  clave de firma **no cambian**, así que se actualiza encima de la versión anterior.
+
+### Añadido
+- **Migración de datos:** la primera vez que arranca, copia `%LOCALAPPDATA%\DescargadorYouTube` a
+  `%LOCALAPPDATA%\DescargaVideo` (ajustes, presets, log y motor yt-dlp). Copia, no mueve: la carpeta vieja queda intacta. Si
+  falla, la app arranca igual y lo reintenta. La versión portable no migra.
+- El instalador, al actualizar desde la versión con el nombre anterior, borra el ejecutable y los accesos directos viejos.
+
+### Decisiones tomadas
+- El `AppId` del instalador no cambia: el instalador nuevo reemplaza al viejo en vez de instalarse al lado.
+- Quien ya tenía la app conserva su carpeta de instalación anterior (Inno Setup reutiliza la ruta por `AppId`); las
+  instalaciones nuevas usan `%LOCALAPPDATA%\Programs\DescargaVideo`.
+- El repositorio de GitHub sigue llamándose `descargador-youtube`: así las versiones ya instaladas encuentran las
+  actualizaciones. Se puede renombrar después (GitHub redirige el nombre viejo) y cambiar `REPO` en `branding.py`.
+- El actualizador sigue buscando el instalador por `endswith("setup.exe")`, por lo que sirve con ambos nombres.
+
+### Pendiente / no verificado
+- La actualización automática desde una app **ya instalada con el nombre viejo** se probó con una copia de prueba del
+  instalador (otro `AppId`, otra carpeta) y con el actualizador de la 2.0.2 leyendo la nueva Release; no sobre una
+  instalación real distinta de esa copia.
+
 ## [2.0.2] — 2026-11-09
 
 ### Corregido

@@ -13,27 +13,27 @@ if ($LASTEXITCODE -eq 0) { throw "La release $tag ya existe. Sube VERSION en upd
 if ($LASTEXITCODE) { throw "Falló la compilación" }
 
 # ZIP descargable: instalador + Leeme.txt
-$stage = Join-Path $env:TEMP "DescargadorYouTube-zip"
+$stage = Join-Path $env:TEMP "DescargaVideo-zip"
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory $stage | Out-Null
-Copy-Item output\DescargadorYouTube-Setup.exe, Leeme.txt $stage
+Copy-Item output\DescargaVideo-Setup.exe, Leeme.txt $stage
 # SHA-256 del instalador: la app lo exige para actualizarse (formato "hash  archivo", como sha256sum)
-$setup = "output\DescargadorYouTube-Setup.exe"
+$setup = "output\DescargaVideo-Setup.exe"
 $sha = "$setup.sha256"
 $hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower()
-[IO.File]::WriteAllText((Join-Path $PWD $sha), "$hash  DescargadorYouTube-Setup.exe`n", (New-Object Text.UTF8Encoding $false))
+[IO.File]::WriteAllText((Join-Path $PWD $sha), "$hash  DescargaVideo-Setup.exe`n", (New-Object Text.UTF8Encoding $false))
 
-$zip = "output\DescargadorYouTube.zip"
+$zip = "output\DescargaVideo.zip"
 Remove-Item $zip -ErrorAction SilentlyContinue
 Compress-Archive -Path "$stage\*" -DestinationPath $zip
 
 # Versión portable: la carpeta de dist\ + ffmpeg (+ deno) + portable.flag. Guarda sus datos en .\data
-$portable = "output\DescargadorYouTube-portable.zip"
-$pstage = Join-Path $env:TEMP "DescargadorYouTube-portable"
+$portable = "output\DescargaVideo-portable.zip"
+$pstage = Join-Path $env:TEMP "DescargaVideo-portable"
 Remove-Item $pstage -Recurse -Force -ErrorAction SilentlyContinue
-$papp = Join-Path $pstage "DescargadorYouTube"
+$papp = Join-Path $pstage "DescargaVideo"
 New-Item -ItemType Directory $papp | Out-Null
-Copy-Item "dist\DescargadorYouTube\*" $papp -Recurse
+Copy-Item "dist\DescargaVideo\*" $papp -Recurse
 Copy-Item "vendor\ffmpeg.exe" $papp
 if (Test-Path "vendor\deno.exe") { Copy-Item "vendor\deno.exe" $papp }
 Copy-Item Leeme.txt $papp
@@ -43,6 +43,6 @@ Compress-Archive -Path $papp -DestinationPath $portable
 
 $notesFile = Join-Path $env:TEMP "release-notes.md"
 [IO.File]::WriteAllText($notesFile, $Notas, (New-Object Text.UTF8Encoding $false))
-gh release create $tag $setup $sha $zip $portable --title "Descargador de YouTube $version" --notes-file $notesFile
+gh release create $tag $setup $sha $zip $portable --title "DescargaVideo $version" --notes-file $notesFile
 if ($LASTEXITCODE) { throw "Falló la publicación" }
 Write-Host "Publicada $tag" -ForegroundColor Green

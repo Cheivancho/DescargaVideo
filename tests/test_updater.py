@@ -36,7 +36,7 @@ def fake_get(release: dict, extra: dict | None = None):
     return _get
 
 
-SETUP = {"name": "DescargadorYouTube-Setup.exe", "browser_download_url": "http://x/setup", "size": 3}
+SETUP = {"name": "DescargaVideo-Setup.exe", "browser_download_url": "http://x/setup", "size": 3}
 HASH = "ab" * 32
 
 
@@ -230,8 +230,8 @@ def test_reset_engine_borra_todo(datos):
 def test_data_dir_normal_usa_localappdata(tmp_path):
     base, local = tmp_path / "app", tmp_path / "local"
     base.mkdir()
-    assert updater.resolve_data_dir(str(base), str(local)) == str(local / "DescargadorYouTube")
-    assert updater.resolve_data_dir(str(base), None).endswith("DescargadorYouTube")  # sin LOCALAPPDATA
+    assert updater.resolve_data_dir(str(base), str(local)) == str(local / "DescargaVideo")
+    assert updater.resolve_data_dir(str(base), None).endswith("DescargaVideo")  # sin LOCALAPPDATA
 
 
 def test_data_dir_portable_con_flag(tmp_path):
@@ -267,3 +267,80 @@ def test_descarga_cortada_no_deja_carpeta_temporal(monkeypatch, tmp_path):
     with pytest.raises(OSError):
         updater.download_installer({"url": "x", "sha256": "ab"})
     assert list(tmp_path.iterdir()) == []
+
+
+# ------------------------------------------------ cambio de nombre: se reconocen el instalador viejo y el nuevo
+@pytest.mark.parametrize(
+    "nombre", ["DescargaVideo-Setup.exe", "DescargadorYouTube-Setup.exe", "OtroNombre-SETUP.EXE"])
+def test_update_reconoce_el_instalador_con_cualquier_nombre(monkeypatch, nombre):
+    """El actualizador solo exige que el asset termine en «setup.exe»: así las versiones instaladas con el nombre
+    anterior encuentran el instalador del nombre nuevo."""
+    asset = {"name": nombre, "browser_download_url": "http://x/setup", "size": 3, "digest": "sha256:" + HASH}
+    monkeypatch.setattr(updater, "_get", fake_get(release(assets=[asset])))
+    upd = updater.check_app_update()
+    assert upd["url"] == "http://x/setup" and upd["sha256"] == HASH
+
+
+def test_update_con_sha256_del_instalador_nuevo(monkeypatch):
+    side = {"name": "DescargaVideo-Setup.exe.sha256", "browser_download_url": "http://x/h"}
+    monkeypatch.setattr(updater, "_get", fake_get(release(assets=[SETUP, side]),
+                                                  {"http://x/h": f"{HASH}  DescargaVideo-Setup.exe\n".encode()}))
+    assert updater.check_app_update()["sha256"] == HASH
+
+
+# ---------------------------------------------------------------- migración de datos del nombre anterior
+def _datos_viejos(base):
+    viejo = base / "DescargadorYouTube"
+    (viejo / "yt-dlp").mkdir(parents=True)
+    (viejo / "state.json").write_text('{"settings": {"fmt": "h264"}}', encoding="utf-8")
+    (viejo / "presets.json").write_text("{}", encoding="utf-8")
+    (viejo / "yt-dlp" / "version.txt").write_text("2026.10.1", encoding="utf-8")
+    return viejo
+
+
+def test_migracion_copia_los_datos_y_no_toca_la_carpeta_vieja(tmp_path):
+    viejo = _datos_viejos(tmp_path)
+    nuevo = tmp_path / "DescargaVideo"
+    assert updater.migrate_legacy_data(str(nuevo), str(viejo)) is True
+    assert (nuevo / "state.json").read_text(encoding="utf-8") == '{"settings": {"fmt": "h264"}}'
+    assert (nuevo / "yt-dlp" / "version.txt").read_text(encoding="utf-8") == "2026.10.1"
+    assert (viejo / "state.json").exists() and (viejo / "yt-dlp" / "version.txt").exists()  # COPIA, no mueve
+
+
+def test_migracion_no_pisa_una_carpeta_nueva_existente(tmp_path):
+    viejo = _datos_viejos(tmp_path)
+    nuevo = tmp_path / "DescargaVideo"
+    nuevo.mkdir()
+    (nuevo / "state.json").write_text("{}", encoding="utf-8")
+    assert updater.migrate_legacy_data(str(nuevo), str(viejo)) is False
+    assert (nuevo / "state.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_migracion_sin_carpeta_vieja_no_hace_nada(tmp_path):
+    nuevo = tmp_path / "DescargaVideo"
+    assert updater.migrate_legacy_data(str(nuevo), str(tmp_path / "DescargadorYouTube")) is False
+    assert not nuevo.exists()
+
+
+def test_migracion_que_falla_no_deja_una_copia_a_medias(tmp_path, monkeypatch):
+    viejo = _datos_viejos(tmp_path)
+    nuevo = tmp_path / "DescargaVideo"
+
+    def roto(src, dst, *a, **k):
+        os.makedirs(dst)
+        (tmp_path / "DescargaVideo" / "a-medias.txt").write_text("x", encoding="utf-8")
+        raise OSError("disco lleno")
+    monkeypatch.setattr(updater.shutil, "copytree", roto)
+    assert updater.migrate_legacy_data(str(nuevo), str(viejo)) is False  # no lanza: la app arranca igual
+    assert not nuevo.exists()  # y se reintentará en el próximo arranque
+
+
+def test_migracion_usa_las_carpetas_con_el_nombre_viejo_y_nuevo(tmp_path):
+    assert updater.legacy_data_dir(str(tmp_path)) == str(tmp_path / "DescargadorYouTube")
+    assert updater.resolve_data_dir(str(tmp_path), str(tmp_path)) == str(tmp_path / "DescargaVideo")
+
+
+def test_portable_no_migra(tmp_path, monkeypatch):
+    monkeypatch.setattr(updater, "IS_PORTABLE", True)
+    monkeypatch.setattr(updater, "migrate_legacy_data", lambda *a: pytest.fail("la versión portable no debe migrar"))
+    assert updater.migrate_legacy_data_dir() is False

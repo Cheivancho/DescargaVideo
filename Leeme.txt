@@ -1,5 +1,6 @@
-﻿DESCARGADOR DE YOUTUBE
+﻿DESCARGAVIDEO
 ======================
+(Antes se llamaba «Descargador de YouTube»: es el mismo programa y se conservan tus ajustes.)
 
 Programa para Windows que descarga videos de YouTube en todas las
 resoluciones disponibles (desde 144p hasta 4K u 8K), audio, subtítulos
@@ -9,7 +10,7 @@ pantallas LED (ProRes, DNxHR, HAP).
 
 CÓMO INSTALARLO
 ---------------
-1. Haz doble clic en "DescargadorYouTube-Setup.exe".
+1. Haz doble clic en "DescargaVideo-Setup.exe".
 2. Si Windows muestra "Windows protegió su PC":
       pulsa "Más información" y luego "Ejecutar de todas formas".
    (Es normal: el instalador no tiene firma digital de pago.)
@@ -17,8 +18,8 @@ CÓMO INSTALARLO
    en el escritorio.
 
 VERSIÓN PORTABLE (sin instalar): descomprime
-"DescargadorYouTube-portable.zip" en cualquier carpeta (o un USB) y abre
-DescargadorYouTube.exe. Todos sus datos quedan en la carpeta "data"
+"DescargaVideo-portable.zip" en cualquier carpeta (o un USB) y abre
+DescargaVideo.exe. Todos sus datos quedan en la carpeta "data"
 de al lado. No se actualiza sola: cuando haya una versión nueva la app
 te lo indicará arriba a la derecha y deberás descargar el .zip nuevo.
 

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Descargador de YouTube</string>
+    <string name="app_name">DescargaVideo</string>
 
-    <style name="Theme.Descargador" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.DescargaVideo" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:statusBarColor">@color/bg</item>
         <item name="android:navigationBarColor">@color/bg</item>

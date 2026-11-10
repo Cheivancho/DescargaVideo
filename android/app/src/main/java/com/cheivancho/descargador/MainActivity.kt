@@ -149,7 +149,7 @@ private fun Screen(vm: MainViewModel) {
             item {
                 when (val a = vm.analysis) {
                     Analysis.Idle -> Text(
-                        "Pega un enlace de YouTube, o compártelo desde la app de YouTube con «Compartir → Descargador».",
+                        "Pega un enlace de YouTube, o compártelo desde la app de YouTube con «Compartir → DescargaVideo».",
                         color = Muted, fontSize = 13.sp,
                     )
                     Analysis.Loading -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -189,7 +189,7 @@ private fun Header(onAbout: () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text("▶", color = Coral, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(
-            "  Descargador de YouTube", color = TextMain, fontSize = 19.sp, fontWeight = FontWeight.Bold,
+            "  DescargaVideo", color = TextMain, fontSize = 19.sp, fontWeight = FontWeight.Bold,
             modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
         TextButton(onClick = onAbout) { Text("Acerca de", color = Muted) }
@@ -403,14 +403,14 @@ private fun AboutDialog(vm: MainViewModel, onClose: () -> Unit) {
     AlertDialog(
         onDismissRequest = onClose,
         containerColor = Panel,
-        title = { Text("Descargador de YouTube", color = TextMain) },
+        title = { Text("DescargaVideo", color = TextMain) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Versión de la app: $appVer", color = TextMain)
                 Text("Motor yt-dlp: $engine", color = TextMain)
                 Text("Se actualiza solo una vez al día. Si YouTube deja de funcionar, prueba a actualizarlo ahora.",
                     color = Muted, fontSize = 12.sp)
-                Text("Las descargas se guardan en Descargas/DescargadorYouTube. Usa la app solo con contenido " +
+                Text("Las descargas se guardan en Descargas/DescargaVideo. Usa la app solo con contenido " +
                     "que tengas derecho a descargar.", color = Muted, fontSize = 12.sp)
                 TextButton(onClick = {
                     msg = "Buscando…"

@@ -112,7 +112,7 @@ object Downloads {
             val out = findOutput(dir) ?: error("No se generó ningún archivo.")
             val (uri, mime) = saveToDownloads(ctx, out)
             modify(job.id) {
-                copy(status = Status.DONE, progress = 1f, text = "Listo · Descargas/DescargadorYouTube",
+                copy(status = Status.DONE, progress = 1f, text = "Listo · Descargas/DescargaVideo",
                     savedUri = uri.toString(), savedMime = mime)
             }
         } catch (_: YoutubeDL.CanceledException) {
@@ -174,13 +174,13 @@ object Downloads {
         else -> "application/octet-stream"
     }
 
-    /** Copia el archivo a Descargas/DescargadorYouTube (sin pedir permisos de almacenamiento). */
+    /** Copia el archivo a Descargas/DescargaVideo (sin pedir permisos de almacenamiento). */
     private fun saveToDownloads(ctx: Context, file: File): Pair<Uri, String> {
         val mime = mimeFor(file.extension)
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, file.name)
             put(MediaStore.Downloads.MIME_TYPE, mime)
-            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/DescargadorYouTube")
+            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/DescargaVideo")
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
         val resolver = ctx.contentResolver

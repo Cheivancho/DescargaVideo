@@ -44,7 +44,7 @@ if (-not (Test-Path "vendor\deno.exe")) {
 $version = (Select-String -Path updater.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
 Write-Host "Compilando versión $version" -ForegroundColor Cyan
 
-& $pyExe @pyArgs -m PyInstaller --noconfirm --onedir --windowed --name DescargadorYouTube `
+& $pyExe @pyArgs -m PyInstaller --noconfirm --onedir --windowed --name DescargaVideo `
     --icon icon.ico --add-data "icon.ico;." --collect-all yt_dlp --copy-metadata yt-dlp `
     --collect-all yt_dlp_ejs --copy-metadata yt-dlp-ejs app.py
 if ($LASTEXITCODE) { throw "PyInstaller falló" }
@@ -59,4 +59,4 @@ if ($env:SIGN_COMMAND) {
 & $iscc @isccArgs installer.iss
 if ($LASTEXITCODE) { throw "Inno Setup falló" }
 
-Write-Host "Listo: output\DescargadorYouTube-Setup.exe" -ForegroundColor Green
+Write-Host "Listo: output\DescargaVideo-Setup.exe" -ForegroundColor Green

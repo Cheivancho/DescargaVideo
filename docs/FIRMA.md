@@ -6,7 +6,7 @@ con las descargas; un certificado EV la da de inmediato). **Es un trámite manua
 verificada y, normalmente, dinero o una solicitud aprobada. Nada del proyecto depende de ello: si no hay firma,
 todo se compila y publica igual.
 
-> **No confundir con el SHA-256.** El archivo `DescargadorYouTube-Setup.exe.sha256` protege contra descargas
+> **No confundir con el SHA-256.** El archivo `DescargaVideo-Setup.exe.sha256` protege contra descargas
 > **corruptas**, pero no demuestra *quién* publicó el instalador: si alguien tomara el control de la cuenta de
 > GitHub, publicaría también su propio hash. Solo una firma de código con un certificado emitido a tu nombre lo
 > evita.
@@ -54,10 +54,10 @@ La firma es **opcional** y solo se activa si defines lo necesario:
 
 Con **SignPath** o **Azure Trusted Signing** el paso 3 cambia: ambos tienen su propia acción de GitHub y no usan un `.pfx`;
 habría que sustituir el paso *«Preparar la firma»* por la acción del proveedor (siguiendo su documentación) y firmar
-`output\DescargadorYouTube-Setup.exe` después de compilar.
+`output\DescargaVideo-Setup.exe` después de compilar.
 
 ## Qué falta por firmar
 
-Inno Setup firma el instalador y el desinstalador. El `DescargadorYouTube.exe` que va **dentro** del instalador (y el de
+Inno Setup firma el instalador y el desinstalador. El `DescargaVideo.exe` que va **dentro** del instalador (y el de
 la versión portable) no se firma con este flujo; si quieres firmarlo también, hay que firmarlo con `signtool` después de
 PyInstaller y antes de ejecutar Inno Setup.

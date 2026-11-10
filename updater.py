@@ -21,8 +21,10 @@ import time
 import urllib.request
 import zipfile
 
-VERSION = "2.0.2"
-REPO = "Cheivancho/descargador-youtube"
+import branding
+
+VERSION = "2.1.0"
+REPO = branding.REPO
 
 PORTABLE_FLAG = "portable.flag"
 
@@ -34,23 +36,55 @@ def app_dir() -> str:
 
 def resolve_data_dir(base: str, localappdata: str | None) -> str:
     """Carpeta de datos (estado, log, presets, motor yt-dlp). Con 'portable.flag' junto al ejecutable es la
-    carpeta 'data' de al lado (versión portable); si no, %LOCALAPPDATA%\\DescargadorYouTube."""
+    carpeta 'data' de al lado (versión portable); si no, %LOCALAPPDATA%\\DescargaVideo."""
     if os.path.isfile(os.path.join(base, PORTABLE_FLAG)):
         return os.path.join(base, "data")
-    return os.path.join(localappdata or os.path.expanduser("~"), "DescargadorYouTube")
+    return os.path.join(localappdata or os.path.expanduser("~"), branding.DATA_DIRNAME)
+
+
+def legacy_data_dir(localappdata: str | None) -> str:
+    """Carpeta de datos que usaba la versión con el nombre anterior («Descargador de YouTube»)."""
+    return os.path.join(localappdata or os.path.expanduser("~"), branding.LEGACY_DATA_DIRNAME)
+
+
+def migrate_legacy_data(new_dir: str, legacy_dir: str) -> bool:
+    """Copia (NO mueve) los datos de la versión anterior a la carpeta nueva, una sola vez.
+
+    Solo actúa si existe la carpeta vieja y todavía no existe la nueva. Si algo falla, borra la copia a medias y la
+    app sigue con carpeta vacía (se reintenta en el próximo arranque). La carpeta vieja nunca se toca. Devuelve True
+    si copió.
+    """
+    try:
+        if os.path.isdir(new_dir) or not os.path.isdir(legacy_dir):
+            return False
+        shutil.copytree(legacy_dir, new_dir)
+        return True
+    except Exception:  # noqa: BLE001  nunca debe impedir que la app arranque
+        shutil.rmtree(new_dir, ignore_errors=True)
+        log.warning("No se pudieron migrar los datos de %s", legacy_dir, exc_info=True)
+        return False
 
 
 IS_PORTABLE = os.path.isfile(os.path.join(app_dir(), PORTABLE_FLAG))
 DATA_DIR = resolve_data_dir(app_dir(), os.environ.get("LOCALAPPDATA"))
+
+
+def migrate_legacy_data_dir() -> bool:
+    """Migra los datos del nombre anterior a DATA_DIR (la versión portable no migra: ya trae sus datos)."""
+    if IS_PORTABLE:
+        return False
+    return migrate_legacy_data(DATA_DIR, legacy_data_dir(os.environ.get("LOCALAPPDATA")))
+
+
 YTDLP_DIR = os.path.join(DATA_DIR, "yt-dlp")
 YTDLP_NEXT = os.path.join(DATA_DIR, "yt-dlp.next")
 STATE_FILE = os.path.join(DATA_DIR, "state.json")
 YTDLP_CHECK_EVERY = 6 * 3600  # segundos
 YTDLP_RETRY_EVERY = 3600  # tras un fallo se reintenta antes
-HEADERS = {"User-Agent": f"DescargadorYouTube/{VERSION}"}
-SETUP_NAME = "DescargadorYouTube-Setup.exe"
+HEADERS = {"User-Agent": f"{branding.APP_SLUG}/{VERSION}"}
+SETUP_NAME = branding.SETUP_NAME
 
-log = logging.getLogger("descargador")
+log = logging.getLogger("descargavideo")
 
 
 def parse_version(v: str | None) -> tuple[int, ...]:
@@ -316,7 +350,7 @@ def download_installer(update: dict, progress=None) -> str:
     """Descarga el instalador y verifica su SHA-256. Sin hash o con hash distinto, no devuelve ruta."""
     if not update.get("sha256"):
         raise ValueError("Actualización rechazada: no hay SHA-256 con el que verificar el instalador.")
-    d = tempfile.mkdtemp(prefix="DescargadorYouTube-update-")
+    d = tempfile.mkdtemp(prefix=f"{branding.APP_SLUG}-update-")
     path = os.path.join(d, SETUP_NAME)
     h = hashlib.sha256()
     try:

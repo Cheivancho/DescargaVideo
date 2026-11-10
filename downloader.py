@@ -28,7 +28,7 @@ from formats import (
 )
 from util import fmt_eta, fmt_speed, short_title
 
-log = logging.getLogger("descargador")
+log = logging.getLogger("descargavideo")
 
 
 INFO_MAX_AGE = 20 * 60  # segundos: pasado este tiempo las URLs de stream del análisis pueden haber caducado

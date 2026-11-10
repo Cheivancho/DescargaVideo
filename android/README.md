@@ -1,15 +1,15 @@
-# Descargador de YouTube — Android
+# DescargaVideo — Android
 
-Versión para Android del descargador (carpeta `android/` del repositorio). Usa
+Versión para Android de DescargaVideo (antes «Descargador de YouTube») (carpeta `android/` del repositorio). Usa
 [youtubedl-android](https://github.com/yausername/youtubedl-android) (yt-dlp + Python + ffmpeg + QuickJS incluidos), así que no
 necesita instalar nada más en el teléfono.
 
 ## Qué hace (v0.1.0)
 
-- Pegar un enlace, o **Compartir → Descargador** desde la app de YouTube, y analizarlo (miniatura, título, canal, duración).
+- Pegar un enlace, o **Compartir → DescargaVideo** desde la app de YouTube, y analizarlo (miniatura, título, canal, duración).
 - Video en la resolución elegida (prefiere H.264 + AAC) o solo audio en MP3 / M4A con título y artista.
 - Cola de descargas (una tras otra), cancelar, y las descargas siguen con la app minimizada (notificación de progreso).
-- Se guarda en `Descargas/DescargadorYouTube` (sin pedir permisos de almacenamiento).
+- Se guarda en `Descargas/DescargaVideo` (las descargas hechas con el nombre anterior siguen en `Descargas/DescargadorYouTube`) (sin pedir permisos de almacenamiento).
 - **Avisa cuando hay una versión nueva de la app**: al abrirla consulta las Releases de GitHub y, si hay una más reciente, muestra los cambios y un botón «Actualizar ahora» que la descarga, comprueba su SHA-256 (una versión sin hash se rechaza) y abre el instalador de Android. Android solo permite actualizar con la misma clave de firma, así que una APK ajena no se instala encima. La primera vez pide permiso para «instalar apps de esta fuente». Si Google Play Protect muestra «¿Analizar la app?», se puede elegir «Más detalles → Instalar sin analizar».
 - El motor yt-dlp se actualiza solo (como mucho una vez al día) y a mano desde «Acerca de».
 

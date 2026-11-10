@@ -12,3 +12,11 @@ selftest.txt
 .ruff_cache/
 # Carpeta de datos de la versión portable (junto al ejecutable)
 data/
+
+# Secretos de licencias y firma (nunca al repositorio)
+license_private*.pem
+*.pem
+licenses/
+android/*.jks
+android/keystore.properties
+android/local.properties

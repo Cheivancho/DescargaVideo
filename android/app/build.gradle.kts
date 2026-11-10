@@ -17,8 +17,8 @@ android {
         applicationId = "com.cheivancho.descargador"
         minSdk = 29 // Android 10: guardar en Descargas sin permisos de almacenamiento
         targetSdk = 36
-        versionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 3
-        versionName = (project.findProperty("appVersionName") as String?) ?: "0.1.2"
+        versionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 4
+        versionName = (project.findProperty("appVersionName") as String?) ?: "0.2.0"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 

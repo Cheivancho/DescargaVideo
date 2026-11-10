@@ -56,7 +56,7 @@ object Updater {
 
     private fun open(url: String, timeoutMs: Int): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
-            setRequestProperty("User-Agent", "DescargadorYouTube-Android")
+            setRequestProperty("User-Agent", "DescargaVideo-Android")
             setRequestProperty("Accept", "application/vnd.github+json")
             connectTimeout = timeoutMs
             readTimeout = timeoutMs * 2
